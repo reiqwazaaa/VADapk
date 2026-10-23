@@ -1,13 +1,16 @@
 package com.vad.downloader
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.net.Uri
+import android.os.Build
 import android.provider.DocumentsContract
 import android.os.Bundle
 import android.provider.MediaStore
@@ -30,6 +33,7 @@ import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import org.json.JSONObject
 import java.io.File
+import java.util.Locale
 
 /**
  * VAD - загрузчик видео и аудио по ссылке (порт Video_Audio_Downloader v5.1).
@@ -37,7 +41,8 @@ import java.io.File
  */
 class MainActivity : Activity() {
 
-    private val processId = "vad_download"
+    private val processId = DownloadService.PROCESS_ID
+    private var lastNotifyAt = 0L
     private val reqPickFolder = 42
     private val qualityNames = listOf("FHD (1080p)", "HD (720p)", "Максимум")
 
@@ -62,6 +67,11 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         buildUi()
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 7)
+        }
         handleShareIntent(intent)
         initEngine()
     }
@@ -467,11 +477,46 @@ class MainActivity : Activity() {
         }
     }
 
+    private val progressRe = Regex(
+        "(\\d+(?:\\.\\d+)?)%\\s+of\\s+~?\\s*(\\d+(?:\\.\\d+)?)\\s*([KMGT]?i?B)(?:.*?\\bat\\s+(\\d+(?:\\.\\d+)?)\\s*([KMGT]?i?B)/s)?"
+    )
+
+    private fun toMb(v: Double, unit: String): Double = when (unit.uppercase().replace("I", "")) {
+        "B" -> v / (1024 * 1024)
+        "KB" -> v / 1024
+        "MB" -> v
+        "GB" -> v * 1024
+        "TB" -> v * 1024 * 1024
+        else -> v
+    }
+
+    private fun fmtEta(sec: Long): String =
+        if (sec < 0) "?" else String.format(Locale.US, "%d:%02d", sec / 60, sec % 60)
+
+    /** -> строка вида "45% · 22.6 / 50.0 МБ · 2.5 МБ/с · осталось 0:12" либо null */
+    private fun progressText(pct: Float, eta: Long, line: String): String? {
+        val m = progressRe.find(line) ?: return null
+        val p = m.groupValues[1].toDouble()
+        val total = toMb(m.groupValues[2].toDouble(), m.groupValues[3])
+        val done = total * p / 100.0
+        val sb = StringBuilder()
+        sb.append(String.format(Locale.US, "%.1f%% · %.1f / %.1f МБ", p, done, total))
+        if (m.groupValues[4].isNotEmpty()) {
+            val sp = toMb(m.groupValues[4].toDouble(), m.groupValues[5])
+            sb.append(String.format(Locale.US, " · %.2f МБ/с", sp))
+        }
+        sb.append(" · осталось ").append(fmtEta(eta))
+        return sb.toString()
+    }
+
     private fun runDownload(url: String, playlist: Boolean, configure: (YoutubeDLRequest) -> Unit) {
         if (!engineReady || busy) return
         setBusy(true)
         setStatus("Скачивание…")
+        DownloadService.start(this)
         Thread {
+            var doneTitle = "Скачивание"
+            var doneText = ""
             val tmp = File(cacheDir, "dl").apply {
                 deleteRecursively()
                 mkdirs()
@@ -487,9 +532,17 @@ class MainActivity : Activity() {
                 req.addOption("-o", template)
 
                 YoutubeDL.getInstance().execute(req, processId) { progress, eta, line ->
+                    val info = progressText(progress, eta, line)
                     runOnUiThread {
                         if (progress >= 0) progressBar.progress = progress.toInt()
-                        statusText.text = "Скачивание… ${progress.toInt()}%  (осталось ${eta} с)"
+                        statusText.text = info ?: "Скачивание… ${progress.toInt()}%"
+                    }
+                    if (info != null) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastNotifyAt > 700) {
+                            lastNotifyAt = now
+                            DownloadService.update(this, "Скачивание", info, progress.toInt())
+                        }
                     }
                     if (!line.startsWith("[download]") || !line.contains("%")) log(line)
                 }
@@ -497,18 +550,26 @@ class MainActivity : Activity() {
                 setStatus("Сохранение в ${targetLabel()}…")
                 val saved = saveToDownloads(tmp)
                 if (saved == 0) {
+                    doneTitle = "Ошибка"
+                    doneText = "Файлы не найдены"
                     setStatus("Файлы не найдены")
                     log("Скачивание завершилось, но файлов нет.")
                 } else {
+                    doneTitle = "Скачивание завершено"
+                    doneText = "Сохранено файлов: $saved (${targetLabel()})"
                     setStatus("Готово! Сохранено файлов: $saved (${targetLabel()})")
                     log("Готово. Файлы в папке ${targetLabel()}.")
                 }
             } catch (e: Throwable) {
                 val m = e.message.orEmpty()
                 if (m.contains("interrupted", true) || m.contains("destroyed", true)) {
+                    doneTitle = "Остановлено"
+                    doneText = "Скачивание отменено"
                     setStatus("Остановлено")
                     log("Процесс остановлен.")
                 } else {
+                    doneTitle = "Ошибка скачивания"
+                    doneText = m.lineSequence().firstOrNull { it.isNotBlank() }?.take(160) ?: "Неизвестная ошибка"
                     setStatus("Ошибка скачивания")
                     log("Ошибка: $m")
                     if (m.contains("sign in", true) || m.contains("Precondition", true)) {
@@ -517,6 +578,8 @@ class MainActivity : Activity() {
                 }
             } finally {
                 tmp.deleteRecursively()
+                DownloadService.stop(this)
+                DownloadService.finish(this, doneTitle, doneText)
                 setBusy(false)
             }
         }.start()
