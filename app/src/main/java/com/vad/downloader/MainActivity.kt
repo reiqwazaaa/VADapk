@@ -194,6 +194,18 @@ class MainActivity : Activity() {
                 YoutubeDL.getInstance().init(application)
                 FFmpeg.getInstance().init(application)
                 engineReady = true
+                setBusy(true)
+                val last = prefs.getLong("last_update", 0L)
+                if (System.currentTimeMillis() - last > 12L * 3600 * 1000) {
+                    setStatus("Обновление yt-dlp…")
+                    try {
+                        YoutubeDL.getInstance().updateYoutubeDL(application, YoutubeDL.UpdateChannel.NIGHTLY)
+                        prefs.edit().putLong("last_update", System.currentTimeMillis()).apply()
+                        log("yt-dlp обновлён автоматически.")
+                    } catch (e: Throwable) {
+                        log("Авто-обновление yt-dlp не удалось: ${e.message}")
+                    }
+                }
                 setStatus("Готово. Вставьте ссылку.")
                 setBusy(false)
             } catch (e: Throwable) {
@@ -209,7 +221,8 @@ class MainActivity : Activity() {
         setStatus("Обновление yt-dlp…")
         Thread {
             try {
-                val res = YoutubeDL.getInstance().updateYoutubeDL(application)
+                val res = YoutubeDL.getInstance().updateYoutubeDL(application, YoutubeDL.UpdateChannel.NIGHTLY)
+                prefs.edit().putLong("last_update", System.currentTimeMillis()).apply()
                 log("yt-dlp: обновление завершено (${res ?: "без изменений"})")
                 setStatus("yt-dlp обновлён")
             } catch (e: Throwable) {
@@ -432,6 +445,9 @@ class MainActivity : Activity() {
                 } else {
                     setStatus("Ошибка скачивания")
                     log("Ошибка: $m")
+                    if (m.contains("sign in", true) || m.contains("Precondition", true)) {
+                        log("Подсказка: нажмите «Обновить yt-dlp» и повторите; если не помогло - включите прокси/VPN.")
+                    }
                 }
             } finally {
                 tmp.deleteRecursively()
