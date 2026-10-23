@@ -7,6 +7,8 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
+import android.net.Uri
+import android.provider.DocumentsContract
 import android.os.Bundle
 import android.provider.MediaStore
 import android.text.InputType
@@ -36,11 +38,13 @@ import java.io.File
 class MainActivity : Activity() {
 
     private val processId = "vad_download"
+    private val reqPickFolder = 42
     private val qualityNames = listOf("FHD (1080p)", "HD (720p)", "Максимум")
 
     private lateinit var urlInput: EditText
     private lateinit var playlistBox: CheckBox
     private lateinit var qualitySpinner: Spinner
+    private lateinit var pathText: TextView
     private lateinit var progressBar: ProgressBar
     private lateinit var statusText: TextView
     private lateinit var logText: TextView
@@ -111,6 +115,17 @@ class MainActivity : Activity() {
         }
         root.addView(TextView(this).apply { text = "Качество (для авто-режима)" })
         root.addView(qualitySpinner)
+
+        pathText = TextView(this)
+        root.addView(pathText)
+        val pathRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        pathRow.addView(button("Выбрать папку…") { pickFolder() })
+        pathRow.addView(button("По умолчанию") {
+            prefs.edit().remove("tree_uri").apply()
+            refreshPath()
+        })
+        root.addView(pathRow)
+        refreshPath()
 
         val bAuto = button("Скачать видео (авто)") { startAuto() }
         val bPick = button("Скачать, выбрав формат…") { startPickFormat() }
@@ -250,6 +265,52 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("Отмена", null)
             .show()
+    }
+
+    // ------------------------------------------------------ Папка загрузки
+
+    private fun treeUri(): Uri? = prefs.getString("tree_uri", null)?.let { Uri.parse(it) }
+
+    private fun targetLabel(): String {
+        val t = treeUri() ?: return "Загрузки/VAD"
+        return try {
+            DocumentsContract.getTreeDocumentId(t).replace(":", "/")
+        } catch (e: Exception) {
+            t.toString()
+        }
+    }
+
+    private fun refreshPath() {
+        pathText.text = "Папка загрузки: ${targetLabel()}"
+    }
+
+    private fun pickFolder() {
+        val i = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+            addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
+            )
+        }
+        startActivityForResult(i, reqPickFolder)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == reqPickFolder && resultCode == RESULT_OK) {
+            val uri = data?.data ?: return
+            try {
+                contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+            } catch (e: Exception) {
+                log("Не удалось запомнить доступ к папке: ${e.message}")
+            }
+            prefs.edit().putString("tree_uri", uri.toString()).apply()
+            refreshPath()
+            toast("Папка выбрана")
+        }
     }
 
     // ---------------------------------------------------------- Скачивание
@@ -433,14 +494,14 @@ class MainActivity : Activity() {
                     if (!line.startsWith("[download]") || !line.contains("%")) log(line)
                 }
 
-                setStatus("Сохранение в Загрузки/VAD…")
+                setStatus("Сохранение в ${targetLabel()}…")
                 val saved = saveToDownloads(tmp)
                 if (saved == 0) {
                     setStatus("Файлы не найдены")
                     log("Скачивание завершилось, но файлов нет.")
                 } else {
-                    setStatus("Готово! Сохранено файлов: $saved (Загрузки/VAD)")
-                    log("Готово. Файлы в папке Загрузки/VAD.")
+                    setStatus("Готово! Сохранено файлов: $saved (${targetLabel()})")
+                    log("Готово. Файлы в папке ${targetLabel()}.")
                 }
             } catch (e: Throwable) {
                 val m = e.message.orEmpty()
@@ -463,6 +524,14 @@ class MainActivity : Activity() {
 
     /** Переносит готовые файлы из кэша в общую папку «Загрузки/VAD» через MediaStore. */
     private fun saveToDownloads(dir: File): Int {
+        val tree = treeUri()
+        if (tree != null) {
+            try {
+                return saveToTree(dir, tree)
+            } catch (e: Exception) {
+                log("Не удалось сохранить в выбранную папку (${e.message}). Сохраняю в Загрузки/VAD.")
+            }
+        }
         var count = 0
         dir.walkTopDown().filter { it.isFile }.forEach { f ->
             val ext = f.extension.lowercase()
@@ -482,6 +551,43 @@ class MainActivity : Activity() {
                 log("Сохранено: ${f.name}")
                 count++
             }
+        }
+        return count
+    }
+
+    /** Сохраняет в папку, выбранную пользователем (Storage Access Framework). */
+    private fun saveToTree(dir: File, tree: Uri): Int {
+        val resolver = contentResolver
+        val root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
+        val folders = HashMap<String, Uri>()
+        var count = 0
+        dir.walkTopDown().filter { it.isFile }.forEach { f ->
+            val ext = f.extension.lowercase()
+            if (ext == "part" || ext == "ytdl" || ext == "temp") return@forEach
+            val rel = f.parentFile!!.relativeTo(dir).path
+            var parent = root
+            if (rel.isNotEmpty()) {
+                var acc = ""
+                for (part in rel.split("/")) {
+                    acc = if (acc.isEmpty()) part else "$acc/$part"
+                    val existing = folders[acc]
+                    parent = if (existing != null) existing else {
+                        val created = DocumentsContract.createDocument(
+                            resolver, parent, DocumentsContract.Document.MIME_TYPE_DIR, part
+                        ) ?: throw IllegalStateException("не удалось создать папку $part")
+                        folders[acc] = created
+                        created
+                    }
+                }
+            }
+            val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
+            val doc = DocumentsContract.createDocument(resolver, parent, mime, f.name)
+                ?: throw IllegalStateException("не удалось создать файл ${f.name}")
+            resolver.openOutputStream(doc)?.use { out ->
+                f.inputStream().use { it.copyTo(out) }
+            }
+            log("Сохранено: ${f.name}")
+            count++
         }
         return count
     }
