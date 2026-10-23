@@ -11,13 +11,16 @@ import android.content.pm.PackageManager
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
-import android.provider.DocumentsContract
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.webkit.MimeTypeMap
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
@@ -44,7 +47,6 @@ class MainActivity : Activity() {
     private val processId = DownloadService.PROCESS_ID
     private var lastNotifyAt = 0L
     private val reqPickFolder = 42
-    private val qualityNames = listOf("FHD (1080p)", "HD (720p)", "Максимум")
 
     private lateinit var urlInput: EditText
     private lateinit var playlistBox: CheckBox
@@ -62,10 +64,14 @@ class MainActivity : Activity() {
 
     private val prefs by lazy { getSharedPreferences("vad", Context.MODE_PRIVATE) }
 
+    private fun t(key: String) = Strings.t(key)
+    private fun f(key: String, vararg a: Any?) = Strings.f(key, *a)
+
     // ------------------------------------------------------------------ UI
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Strings.init(this)
         buildUi()
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -90,85 +96,151 @@ class MainActivity : Activity() {
             setOnClickListener { onClick() }
         }
 
+    /** Строит интерфейс заново (при первом запуске и при смене языка), сохраняя состояние. */
     private fun buildUi() {
+        // --- запоминаем состояние старых вью ---
+        val first = !::urlInput.isInitialized
+        val oldUrl = if (first) "" else urlInput.text.toString()
+        val oldPlaylist = if (first) false else playlistBox.isChecked
+        val oldQuality = if (first) 0 else qualitySpinner.selectedItemPosition
+        val oldLog = if (first) "" else logText.text.toString()
+        val oldProgress = if (first) 0 else progressBar.progress
+        val oldStatus = if (first) null else statusText.text.toString()
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(24), dp(16), dp(16))
+            layoutDirection = if (Strings.isRtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
         }
 
+        // --- заголовок и выбор языка ---
         root.addView(TextView(this).apply {
-            text = "Загрузчик Аудио и Видео"
+            text = t("title")
             textSize = 22f
             setTypeface(typeface, Typeface.BOLD)
         })
 
+        val langRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        langRow.addView(TextView(this).apply {
+            text = t("lang_label") + ": "
+            setPadding(0, 0, dp(8), 0)
+        })
+        val langSpinner = Spinner(this).apply {
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                Strings.languages.map { it.name }
+            )
+            setSelection(Strings.languages.indexOfFirst { it.code == Strings.code }.coerceAtLeast(0))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    val code = Strings.languages[pos].code
+                    if (code != Strings.code) {
+                        Strings.set(this@MainActivity, code)
+                        Handler(Looper.getMainLooper()).post { buildUi() }
+                    }
+                }
+
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+        }
+        langRow.addView(langSpinner)
+        root.addView(langRow)
+
+        // --- ссылка ---
         urlInput = EditText(this).apply {
-            hint = "Ссылка на видео"
+            hint = t("url_hint")
             inputType = InputType.TYPE_TEXT_VARIATION_URI
             setSingleLine(false)
             maxLines = 3
+            textDirection = View.TEXT_DIRECTION_LTR
+            setText(oldUrl)
         }
         root.addView(urlInput)
 
         val urlRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        urlRow.addView(button("Вставить из буфера") { pasteFromClipboard() })
-        urlRow.addView(button("Очистить") { urlInput.setText("") })
+        urlRow.addView(button(t("paste")) { pasteFromClipboard() })
+        urlRow.addView(button(t("clear")) { urlInput.setText("") })
         root.addView(urlRow)
 
-        playlistBox = CheckBox(this).apply { text = "Скачать весь плейлист" }
+        playlistBox = CheckBox(this).apply {
+            text = t("playlist")
+            isChecked = oldPlaylist
+        }
         root.addView(playlistBox)
 
         qualitySpinner = Spinner(this).apply {
             adapter = ArrayAdapter(
-                this@MainActivity, android.R.layout.simple_spinner_dropdown_item, qualityNames
+                this@MainActivity,
+                android.R.layout.simple_spinner_dropdown_item,
+                listOf("FHD (1080p)", "HD (720p)", t("q_max"))
             )
+            setSelection(oldQuality)
         }
-        root.addView(TextView(this).apply { text = "Качество (для авто-режима)" })
+        root.addView(TextView(this).apply { text = t("quality_label") })
         root.addView(qualitySpinner)
 
+        // --- папка загрузки ---
         pathText = TextView(this)
         root.addView(pathText)
         val pathRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        pathRow.addView(button("Выбрать папку…") { pickFolder() })
-        pathRow.addView(button("По умолчанию") {
+        pathRow.addView(button(t("pick_folder")) { pickFolder() })
+        pathRow.addView(button(t("default_folder")) {
             prefs.edit().remove("tree_uri").apply()
             refreshPath()
         })
         root.addView(pathRow)
         refreshPath()
 
-        val bAuto = button("Скачать видео (авто)") { startAuto() }
-        val bPick = button("Скачать, выбрав формат…") { startPickFormat() }
-        val bMp3 = button("Скачать MP3") { startMp3() }
+        // --- кнопки действий ---
+        val bAuto = button(t("dl_auto")) { startAuto() }
+        val bPick = button(t("dl_pick")) { startPickFormat() }
+        val bMp3 = button(t("dl_mp3")) { startMp3() }
         root.addView(bAuto)
         root.addView(bPick)
         root.addView(bMp3)
 
-        cancelButton = button("Отмена") { cancelDownload() }.apply { isEnabled = false }
+        cancelButton = button(t("cancel")) { cancelDownload() }
         root.addView(cancelButton)
 
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
+            progress = oldProgress
         }
         root.addView(progressBar)
 
-        statusText = TextView(this).apply { text = "Запуск движка…" }
+        statusText = TextView(this).apply {
+            text = when {
+                oldStatus == null -> t("st_starting")
+                busy -> oldStatus
+                engineReady -> t("st_ready")
+                else -> t("st_starting")
+            }
+        }
         root.addView(statusText)
 
         val toolsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val bUpdate = button("Обновить yt-dlp") { updateYtDlp() }
-        val bProxy = button("Прокси…") { showProxyDialog() }
+        val bUpdate = button(t("update_btn")) { updateYtDlp() }
+        val bProxy = button(t("proxy_btn")) { showProxyDialog() }
         toolsRow.addView(bUpdate)
         toolsRow.addView(bProxy)
         root.addView(toolsRow)
 
         actionButtons = listOf(bAuto, bPick, bMp3, bUpdate)
-        actionButtons.forEach { it.isEnabled = false }
+        actionButtons.forEach { it.isEnabled = engineReady && !busy }
+        cancelButton.isEnabled = busy
 
+        // --- лог (всегда слева направо) ---
         logText = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             textSize = 12f
             gravity = Gravity.START
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            textDirection = View.TEXT_DIRECTION_LTR
+            text = oldLog
         }
         logScroll = ScrollView(this).apply {
             addView(logText)
@@ -177,6 +249,7 @@ class MainActivity : Activity() {
             )
         }
         root.addView(logScroll)
+        logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
 
         setContentView(root)
     }
@@ -192,7 +265,7 @@ class MainActivity : Activity() {
     private fun pasteFromClipboard() {
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         val text = cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.trim().orEmpty()
-        if (text.isEmpty()) toast("Буфер обмена пуст") else urlInput.setText(text)
+        if (text.isEmpty()) toast(t("clip_empty")) else urlInput.setText(text)
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
@@ -222,20 +295,20 @@ class MainActivity : Activity() {
                 setBusy(true)
                 val last = prefs.getLong("last_update", 0L)
                 if (System.currentTimeMillis() - last > 12L * 3600 * 1000) {
-                    setStatus("Обновление yt-dlp…")
+                    setStatus(t("st_updating"))
                     try {
                         YoutubeDL.getInstance().updateYoutubeDL(application, YoutubeDL.UpdateChannel.NIGHTLY)
                         prefs.edit().putLong("last_update", System.currentTimeMillis()).apply()
-                        log("yt-dlp обновлён автоматически.")
+                        log(t("log_autoupdated"))
                     } catch (e: Throwable) {
-                        log("Авто-обновление yt-dlp не удалось: ${e.message}")
+                        log(f("log_autoupdate_fail", e.message))
                     }
                 }
-                setStatus("Готово. Вставьте ссылку.")
+                setStatus(t("st_ready"))
                 setBusy(false)
             } catch (e: Throwable) {
-                setStatus("Ошибка запуска движка")
-                log("Ошибка инициализации: ${e.message}")
+                setStatus(t("st_init_fail"))
+                log(f("log_init_fail", e.message))
             }
         }.start()
     }
@@ -243,16 +316,16 @@ class MainActivity : Activity() {
     private fun updateYtDlp() {
         if (busy) return
         setBusy(true)
-        setStatus("Обновление yt-dlp…")
+        setStatus(t("st_updating"))
         Thread {
             try {
                 val res = YoutubeDL.getInstance().updateYoutubeDL(application, YoutubeDL.UpdateChannel.NIGHTLY)
                 prefs.edit().putLong("last_update", System.currentTimeMillis()).apply()
-                log("yt-dlp: обновление завершено (${res ?: "без изменений"})")
-                setStatus("yt-dlp обновлён")
+                log(f("log_update_done", res ?: "-"))
+                setStatus(t("st_update_done"))
             } catch (e: Throwable) {
-                log("Ошибка обновления: ${e.message}")
-                setStatus("Не удалось обновить yt-dlp")
+                log(f("log_update_fail", e.message))
+                setStatus(t("st_update_fail"))
             } finally {
                 setBusy(false)
             }
@@ -261,19 +334,20 @@ class MainActivity : Activity() {
 
     private fun showProxyDialog() {
         val input = EditText(this).apply {
-            hint = "например socks5://127.0.0.1:1080"
+            hint = t("proxy_hint")
             setText(prefs.getString("proxy", ""))
             inputType = InputType.TYPE_TEXT_VARIATION_URI
+            textDirection = View.TEXT_DIRECTION_LTR
         }
         AlertDialog.Builder(this)
-            .setTitle("Прокси (пусто - выключен)")
-            .setMessage("Для обхода блокировок можно использовать приложение ByeDPI/VPN со SOCKS5.")
+            .setTitle(t("proxy_title"))
+            .setMessage(t("proxy_msg"))
             .setView(input)
-            .setPositiveButton("Сохранить") { _, _ ->
+            .setPositiveButton(t("save")) { _, _ ->
                 prefs.edit().putString("proxy", input.text.toString().trim()).apply()
-                toast("Сохранено")
+                toast(t("saved"))
             }
-            .setNegativeButton("Отмена", null)
+            .setNegativeButton(t("cancel"), null)
             .show()
     }
 
@@ -282,16 +356,16 @@ class MainActivity : Activity() {
     private fun treeUri(): Uri? = prefs.getString("tree_uri", null)?.let { Uri.parse(it) }
 
     private fun targetLabel(): String {
-        val t = treeUri() ?: return "Загрузки/VAD"
+        val tu = treeUri() ?: return "Download/VAD"
         return try {
-            DocumentsContract.getTreeDocumentId(t).replace(":", "/")
+            DocumentsContract.getTreeDocumentId(tu).replace(":", "/")
         } catch (e: Exception) {
-            t.toString()
+            tu.toString()
         }
     }
 
     private fun refreshPath() {
-        pathText.text = "Папка загрузки: ${targetLabel()}"
+        pathText.text = f("folder", targetLabel())
     }
 
     private fun pickFolder() {
@@ -315,11 +389,11 @@ class MainActivity : Activity() {
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
             } catch (e: Exception) {
-                log("Не удалось запомнить доступ к папке: ${e.message}")
+                log(f("log_perm_fail", e.message))
             }
             prefs.edit().putString("tree_uri", uri.toString()).apply()
             refreshPath()
-            toast("Папка выбрана")
+            toast(t("folder_chosen"))
         }
     }
 
@@ -328,7 +402,7 @@ class MainActivity : Activity() {
     private fun currentUrl(): String? {
         val u = urlInput.text.toString().trim()
         if (u.isEmpty()) {
-            toast("Введите ссылку на видео")
+            toast(t("enter_url"))
             return null
         }
         return u
@@ -379,7 +453,7 @@ class MainActivity : Activity() {
         val url = currentUrl() ?: return
         val playlist = playlistBox.isChecked
         setBusy(true)
-        setStatus("Получение форматов…")
+        setStatus(t("st_formats"))
         Thread {
             try {
                 val req = baseRequest(url, playlist)
@@ -396,19 +470,19 @@ class MainActivity : Activity() {
                 val formats = info.optJSONArray("formats")
                 if (formats != null) {
                     for (i in 0 until formats.length()) {
-                        val f = formats.getJSONObject(i)
-                        val vc = f.optString("vcodec", "none")
-                        val ac = f.optString("acodec", "none")
-                        val fid = f.optString("format_id", "?")
-                        val ext = f.optString("ext", "")
+                        val fm = formats.getJSONObject(i)
+                        val vc = fm.optString("vcodec", "none")
+                        val ac = fm.optString("acodec", "none")
+                        val fid = fm.optString("format_id", "?")
+                        val ext = fm.optString("ext", "")
                         if (vc != "none") {
-                            val h = f.optInt("height", 0)
-                            val w = f.optInt("width", 0)
-                            val res = if (w > 0 && h > 0) "${w}x$h" else f.optString("resolution", "?")
-                            val tag = if (ac != "none") "(+звук)" else "(без звука)"
+                            val h = fm.optInt("height", 0)
+                            val w = fm.optInt("width", 0)
+                            val res = if (w > 0 && h > 0) "${w}x$h" else fm.optString("resolution", "?")
+                            val tag = if (ac != "none") t("with_sound") else t("no_sound")
                             video.add(h to VFormat("$fid | $res | ${vc.substringBefore('.')} | $ext $tag", fid, ac != "none"))
                         } else if (ac != "none") {
-                            val abr = f.optDouble("abr", 0.0)
+                            val abr = fm.optDouble("abr", 0.0)
                             audio.add(abr to AFormat("$fid | ${ac.substringBefore('.')} | ${abr.toInt()}k | $ext", fid))
                         }
                     }
@@ -416,19 +490,19 @@ class MainActivity : Activity() {
                 val v = video.sortedByDescending { it.first }.map { it.second }
                 val a = audio.sortedByDescending { it.first }.map { it.second }
                 val title = info.optString("title", url)
-                log("Форматы для: $title")
+                log(f("log_formats_for", title))
                 runOnUiThread {
                     setBusy(false)
-                    setStatus("Выберите формат")
+                    setStatus(t("st_choose"))
                     if (v.isEmpty()) {
-                        log("Видеоформатов не найдено - используйте авто-режим или MP3.")
+                        log(t("log_no_video"))
                     } else {
                         chooseVideo(url, playlist, v, a)
                     }
                 }
             } catch (e: Throwable) {
-                log("Ошибка: ${e.message}")
-                setStatus("Не удалось получить форматы")
+                log(f("log_error", e.message))
+                setStatus(t("st_formats_fail"))
                 setBusy(false)
             }
         }.start()
@@ -436,7 +510,7 @@ class MainActivity : Activity() {
 
     private fun chooseVideo(url: String, playlist: Boolean, v: List<VFormat>, a: List<AFormat>) {
         AlertDialog.Builder(this)
-            .setTitle("Видео")
+            .setTitle(t("video"))
             .setItems(v.map { it.label }.toTypedArray()) { _, which ->
                 val chosen = v[which]
                 if (chosen.hasAudio || a.isEmpty()) {
@@ -445,19 +519,19 @@ class MainActivity : Activity() {
                     chooseAudio(url, playlist, chosen, a)
                 }
             }
-            .setNegativeButton("Отмена", null)
+            .setNegativeButton(t("cancel"), null)
             .show()
     }
 
     private fun chooseAudio(url: String, playlist: Boolean, v: VFormat, a: List<AFormat>) {
-        val labels = listOf("Лучшее аудио") + a.map { it.label }
+        val labels = listOf(t("best_audio")) + a.map { it.label }
         AlertDialog.Builder(this)
-            .setTitle("Аудио")
+            .setTitle(t("audio"))
             .setItems(labels.toTypedArray()) { _, which ->
                 val aid = if (which == 0) "bestaudio" else a[which - 1].id
                 downloadFormat(url, playlist, "${v.id}+$aid")
             }
-            .setNegativeButton("Отмена", null)
+            .setNegativeButton(t("cancel"), null)
             .show()
     }
 
@@ -471,9 +545,9 @@ class MainActivity : Activity() {
     private fun cancelDownload() {
         try {
             YoutubeDL.getInstance().destroyProcessById(processId)
-            log("Остановка процесса…")
+            log(t("log_stopping"))
         } catch (e: Throwable) {
-            log("Не удалось остановить: ${e.message}")
+            log(f("log_stop_fail", e.message))
         }
     }
 
@@ -493,29 +567,30 @@ class MainActivity : Activity() {
     private fun fmtEta(sec: Long): String =
         if (sec < 0) "?" else String.format(Locale.US, "%d:%02d", sec / 60, sec % 60)
 
-    /** -> строка вида "45% · 22.6 / 50.0 МБ · 2.5 МБ/с · осталось 0:12" либо null */
-    private fun progressText(pct: Float, eta: Long, line: String): String? {
+    /** -> строка вида "45.3% · 22.6 / 50.0 MB · 2.50 MB/s · 0:12 left" либо null */
+    private fun progressText(eta: Long, line: String): String? {
         val m = progressRe.find(line) ?: return null
         val p = m.groupValues[1].toDouble()
         val total = toMb(m.groupValues[2].toDouble(), m.groupValues[3])
         val done = total * p / 100.0
+        val mb = t("mb")
         val sb = StringBuilder()
-        sb.append(String.format(Locale.US, "%.1f%% · %.1f / %.1f МБ", p, done, total))
+        sb.append(String.format(Locale.US, "%.1f%% · %.1f / %.1f %s", p, done, total, mb))
         if (m.groupValues[4].isNotEmpty()) {
             val sp = toMb(m.groupValues[4].toDouble(), m.groupValues[5])
-            sb.append(String.format(Locale.US, " · %.2f МБ/с", sp))
+            sb.append(String.format(Locale.US, " · %.2f %s", sp, t("mbs")))
         }
-        sb.append(" · осталось ").append(fmtEta(eta))
+        sb.append(" · ").append(f("left", fmtEta(eta)))
         return sb.toString()
     }
 
     private fun runDownload(url: String, playlist: Boolean, configure: (YoutubeDLRequest) -> Unit) {
         if (!engineReady || busy) return
         setBusy(true)
-        setStatus("Скачивание…")
+        setStatus(t("st_downloading"))
         DownloadService.start(this)
         Thread {
-            var doneTitle = "Скачивание"
+            var doneTitle = t("n_title")
             var doneText = ""
             val tmp = File(cacheDir, "dl").apply {
                 deleteRecursively()
@@ -532,48 +607,48 @@ class MainActivity : Activity() {
                 req.addOption("-o", template)
 
                 YoutubeDL.getInstance().execute(req, processId) { progress, eta, line ->
-                    val info = progressText(progress, eta, line)
+                    val info = progressText(eta, line)
                     runOnUiThread {
                         if (progress >= 0) progressBar.progress = progress.toInt()
-                        statusText.text = info ?: "Скачивание… ${progress.toInt()}%"
+                        statusText.text = info ?: (t("st_downloading") + " ${progress.toInt()}%")
                     }
                     if (info != null) {
                         val now = System.currentTimeMillis()
                         if (now - lastNotifyAt > 700) {
                             lastNotifyAt = now
-                            DownloadService.update(this, "Скачивание", info, progress.toInt())
+                            DownloadService.update(this, t("n_title"), info, progress.toInt())
                         }
                     }
                     if (!line.startsWith("[download]") || !line.contains("%")) log(line)
                 }
 
-                setStatus("Сохранение в ${targetLabel()}…")
+                setStatus(f("st_saving", targetLabel()))
                 val saved = saveToDownloads(tmp)
                 if (saved == 0) {
-                    doneTitle = "Ошибка"
-                    doneText = "Файлы не найдены"
-                    setStatus("Файлы не найдены")
-                    log("Скачивание завершилось, но файлов нет.")
+                    doneTitle = t("n_error")
+                    doneText = t("st_no_files")
+                    setStatus(t("st_no_files"))
+                    log(t("log_no_files"))
                 } else {
-                    doneTitle = "Скачивание завершено"
-                    doneText = "Сохранено файлов: $saved (${targetLabel()})"
-                    setStatus("Готово! Сохранено файлов: $saved (${targetLabel()})")
-                    log("Готово. Файлы в папке ${targetLabel()}.")
+                    doneTitle = t("n_done_title")
+                    doneText = f("n_done_text", saved, targetLabel())
+                    setStatus(f("st_done", saved, targetLabel()))
+                    log(f("log_done", targetLabel()))
                 }
             } catch (e: Throwable) {
                 val m = e.message.orEmpty()
                 if (m.contains("interrupted", true) || m.contains("destroyed", true)) {
-                    doneTitle = "Остановлено"
-                    doneText = "Скачивание отменено"
-                    setStatus("Остановлено")
-                    log("Процесс остановлен.")
+                    doneTitle = t("n_stopped")
+                    doneText = t("n_cancelled")
+                    setStatus(t("st_stopped"))
+                    log(t("log_stopped"))
                 } else {
-                    doneTitle = "Ошибка скачивания"
-                    doneText = m.lineSequence().firstOrNull { it.isNotBlank() }?.take(160) ?: "Неизвестная ошибка"
-                    setStatus("Ошибка скачивания")
-                    log("Ошибка: $m")
+                    doneTitle = t("n_error")
+                    doneText = m.lineSequence().firstOrNull { it.isNotBlank() }?.take(160) ?: t("n_unknown")
+                    setStatus(t("st_error"))
+                    log(f("log_error", m))
                     if (m.contains("sign in", true) || m.contains("Precondition", true)) {
-                        log("Подсказка: нажмите «Обновить yt-dlp» и повторите; если не помогло - включите прокси/VPN.")
+                        log(t("log_hint_signin"))
                     }
                 }
             } finally {
@@ -585,33 +660,33 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    /** Переносит готовые файлы из кэша в общую папку «Загрузки/VAD» через MediaStore. */
+    /** Переносит готовые файлы из кэша в выбранную папку или в общую «Download/VAD». */
     private fun saveToDownloads(dir: File): Int {
         val tree = treeUri()
         if (tree != null) {
             try {
                 return saveToTree(dir, tree)
             } catch (e: Exception) {
-                log("Не удалось сохранить в выбранную папку (${e.message}). Сохраняю в Загрузки/VAD.")
+                log(f("log_saf_fail", e.message))
             }
         }
         var count = 0
-        dir.walkTopDown().filter { it.isFile }.forEach { f ->
-            val ext = f.extension.lowercase()
+        dir.walkTopDown().filter { it.isFile }.forEach { file ->
+            val ext = file.extension.lowercase()
             if (ext == "part" || ext == "ytdl" || ext == "temp") return@forEach
-            val rel = f.parentFile!!.relativeTo(dir).path.let { if (it.isEmpty()) "" else "/$it" }
+            val rel = file.parentFile!!.relativeTo(dir).path.let { if (it.isEmpty()) "" else "/$it" }
             val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
             val values = ContentValues().apply {
-                put(MediaStore.Downloads.DISPLAY_NAME, f.name)
+                put(MediaStore.Downloads.DISPLAY_NAME, file.name)
                 put(MediaStore.Downloads.MIME_TYPE, mime)
                 put(MediaStore.Downloads.RELATIVE_PATH, "Download/VAD$rel")
             }
             val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
             if (uri != null) {
                 contentResolver.openOutputStream(uri)?.use { out ->
-                    f.inputStream().use { it.copyTo(out) }
+                    file.inputStream().use { it.copyTo(out) }
                 }
-                log("Сохранено: ${f.name}")
+                log(f("log_saved_file", file.name))
                 count++
             }
         }
@@ -624,10 +699,10 @@ class MainActivity : Activity() {
         val root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
         val folders = HashMap<String, Uri>()
         var count = 0
-        dir.walkTopDown().filter { it.isFile }.forEach { f ->
-            val ext = f.extension.lowercase()
+        dir.walkTopDown().filter { it.isFile }.forEach { file ->
+            val ext = file.extension.lowercase()
             if (ext == "part" || ext == "ytdl" || ext == "temp") return@forEach
-            val rel = f.parentFile!!.relativeTo(dir).path
+            val rel = file.parentFile!!.relativeTo(dir).path
             var parent = root
             if (rel.isNotEmpty()) {
                 var acc = ""
@@ -637,19 +712,19 @@ class MainActivity : Activity() {
                     parent = if (existing != null) existing else {
                         val created = DocumentsContract.createDocument(
                             resolver, parent, DocumentsContract.Document.MIME_TYPE_DIR, part
-                        ) ?: throw IllegalStateException("не удалось создать папку $part")
+                        ) ?: throw IllegalStateException("mkdir $part")
                         folders[acc] = created
                         created
                     }
                 }
             }
             val mime = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "application/octet-stream"
-            val doc = DocumentsContract.createDocument(resolver, parent, mime, f.name)
-                ?: throw IllegalStateException("не удалось создать файл ${f.name}")
+            val doc = DocumentsContract.createDocument(resolver, parent, mime, file.name)
+                ?: throw IllegalStateException("create ${file.name}")
             resolver.openOutputStream(doc)?.use { out ->
-                f.inputStream().use { it.copyTo(out) }
+                file.inputStream().use { it.copyTo(out) }
             }
-            log("Сохранено: ${f.name}")
+            log(f("log_saved_file", file.name))
             count++
         }
         return count

@@ -25,6 +25,7 @@ class DownloadService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Strings.init(this)
         ensureChannel(this)
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "vad:download").apply {
@@ -40,7 +41,7 @@ class DownloadService : Service() {
             }
             return START_NOT_STICKY
         }
-        val n = buildNotification(this, "Скачивание", "Подготовка…", -1)
+        val n = buildNotification(this, Strings.t("n_title"), Strings.t("n_prep"), -1)
         startForeground(NOTIF_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         return START_NOT_STICKY
     }
@@ -61,7 +62,7 @@ class DownloadService : Service() {
             val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (nm.getNotificationChannel(CHANNEL_ID) == null) {
                 nm.createNotificationChannel(
-                    NotificationChannel(CHANNEL_ID, "Загрузки", NotificationManager.IMPORTANCE_LOW)
+                    NotificationChannel(CHANNEL_ID, Strings.t("n_channel"), NotificationManager.IMPORTANCE_LOW)
                 )
             }
         }
@@ -82,7 +83,7 @@ class DownloadService : Service() {
             )
             val action = Notification.Action.Builder(
                 Icon.createWithResource(ctx, android.R.drawable.ic_menu_close_clear_cancel),
-                "Отмена", cancel
+                Strings.t("cancel"), cancel
             ).build()
             return Notification.Builder(ctx, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_download)
