@@ -10,6 +10,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.InsetDrawable
@@ -22,6 +26,7 @@ import android.os.Looper
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.text.InputType
+import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -33,6 +38,7 @@ import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
@@ -46,6 +52,7 @@ import com.yausername.youtubedl_android.YoutubeDLRequest
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
+import kotlin.math.sin
 
 /**
  * VAD - загрузчик видео и аудио по ссылке (порт Video_Audio_Downloader v5.1).
@@ -68,10 +75,26 @@ class MainActivity : Activity() {
     private lateinit var actionButtons: List<Button>
     private lateinit var cancelButton: Button
 
-    private var kawaii = false
+    // 0 - обычная, 1 - няшная (день), 2 - няшная (ночь)
+    private var theme = 0
+    private val kawaii: Boolean get() = theme > 0
+    private val night: Boolean get() = theme == 2
     private var catTaps = 0
     private var logVisible = false
-    private val kawaiiText = 0xFF6A2C6B.toInt()
+    private var girlView: ImageView? = null
+    private val moodHandler = Handler(Looper.getMainLooper())
+    private val reqPickCookies = 43
+
+    private val kawaiiText: Int get() = if (night) 0xFFEBDDFF.toInt() else 0xFF6A2C6B.toInt()
+    private val accent: Int get() = if (night) 0xFFB388FF.toInt() else 0xFFFF5FA2.toInt()
+    private val logTextColor: Int get() = if (night) 0xFFD9C9F5.toInt() else 0xFF5A3A78.toInt()
+    private val panelColor: Int get() = if (night) 0x33FFFFFF else 0x99FFFFFF.toInt()
+    private val bgColors: IntArray
+        get() = if (night) intArrayOf(0xFF2B1B4E.toInt(), 0xFF45307A.toInt(), 0xFF1E3A5F.toInt())
+        else intArrayOf(0xFFFFC1E3.toInt(), 0xFFE0C3FF.toInt(), 0xFFBDE7FF.toInt())
+    private val btnColors: IntArray
+        get() = if (night) intArrayOf(0xFF7A4DB8.toInt(), 0xFF9B6FD6.toInt())
+        else intArrayOf(0xFFFF9ACB.toInt(), 0xFFFFC2E5.toInt())
 
     @Volatile private var engineReady = false
     @Volatile private var busy = false
@@ -86,7 +109,9 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Strings.init(this)
-        kawaii = prefs.getBoolean("kawaii_unlocked", false) && prefs.getBoolean("kawaii_on", false)
+        theme = if (prefs.getBoolean("kawaii_unlocked", false))
+            prefs.getInt("theme", if (prefs.getBoolean("kawaii_on", false)) 1 else 0)
+        else 0
         buildUi()
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -108,9 +133,77 @@ class MainActivity : Activity() {
         Button(this).apply {
             this.text = text
             isAllCaps = false
+            maxLines = 1
+            // если текст не помещается - он сам уменьшается (но не меньше 9sp)
+            setAutoSizeTextTypeUniformWithConfiguration(9, 14, 1, TypedValue.COMPLEX_UNIT_SP)
             setOnClickListener { onClick() }
             if (kawaii) styleKawaiiButton(this)
         }
+
+    /** Ряд кнопок: кнопки по размеру текста; если ряд не влезает, делит ширину пропорционально. */
+    private class FitRow(ctx: Context) : LinearLayout(ctx) {
+        init {
+            orientation = HORIZONTAL
+        }
+
+        override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+            val avail = MeasureSpec.getSize(widthMeasureSpec) - paddingLeft - paddingRight
+            val naturals = IntArray(childCount)
+            var total = 0
+            for (i in 0 until childCount) {
+                val c = getChildAt(i)
+                val lp = c.layoutParams as LayoutParams
+                lp.width = ViewGroup.LayoutParams.WRAP_CONTENT
+                lp.weight = 0f
+                c.measure(
+                    MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+                    MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)
+                )
+                naturals[i] = c.measuredWidth + lp.leftMargin + lp.rightMargin
+                total += naturals[i]
+            }
+            if (avail > 0 && total > avail) {
+                for (i in 0 until childCount) {
+                    val lp = getChildAt(i).layoutParams as LayoutParams
+                    lp.width = 0
+                    lp.weight = naturals[i].toFloat()
+                }
+            }
+            super.onMeasure(widthMeasureSpec, heightMeasureSpec)
+        }
+    }
+
+    /** Лёгкое сжатие при нажатии и «пружинка» при отпускании. */
+    private fun attachPressEffect(v: View) {
+        v.setOnTouchListener { view, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN ->
+                    view.animate().scaleX(0.92f).scaleY(0.92f).setDuration(90).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    view.animate().scaleX(1f).scaleY(1f).setDuration(260)
+                        .setInterpolator(OvershootInterpolator(3f)).start()
+            }
+            false
+        }
+    }
+
+    private fun circleBackground(): RippleDrawable {
+        val bg = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            if (kawaii) {
+                colors = btnColors
+                orientation = GradientDrawable.Orientation.TL_BR
+                setStroke(dp(2), 0xFFFFFFFF.toInt())
+            } else {
+                setColor(0xFF4A4A4A.toInt())
+            }
+        }
+        val mask = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(0xFFFFFFFF.toInt())
+        }
+        return RippleDrawable(ColorStateList.valueOf(0x99FFFFFF.toInt()), bg, mask)
+    }
 
     private fun tintText(tv: TextView) {
         if (kawaii) tv.setTextColor(kawaiiText)
@@ -132,10 +225,7 @@ class MainActivity : Activity() {
     /** Няшные кнопки: градиент, скругления, ripple и «пружинка» при нажатии. */
     private fun styleKawaiiButton(b: Button) {
         val r = dp(24).toFloat()
-        val shape = GradientDrawable(
-            GradientDrawable.Orientation.TL_BR,
-            intArrayOf(0xFFFF9ACB.toInt(), 0xFFFFC2E5.toInt())
-        ).apply {
+        val shape = GradientDrawable(GradientDrawable.Orientation.TL_BR, btnColors).apply {
             cornerRadius = r
             setStroke(dp(2), 0xFFFFFFFF.toInt())
         }
@@ -145,38 +235,51 @@ class MainActivity : Activity() {
         }
         val ripple = RippleDrawable(ColorStateList.valueOf(0x99FFFFFF.toInt()), shape, mask)
         b.background = InsetDrawable(ripple, dp(4), dp(3), dp(4), dp(3))
+        b.setPadding(dp(20), dp(10), dp(20), dp(10))
+        b.minWidth = 0
+        b.minimumWidth = 0
+        b.minHeight = 0
+        b.minimumHeight = dp(44)
         b.setTextColor(kawaiiText)
         b.setTypeface(b.typeface, Typeface.BOLD)
         b.stateListAnimator = null
-        b.setOnTouchListener { v, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN ->
-                    v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(90).start()
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
-                    v.animate().scaleX(1f).scaleY(1f).setDuration(260)
-                        .setInterpolator(OvershootInterpolator(3f)).start()
-            }
-            false
-        }
+        attachPressEffect(b)
     }
 
-    /** Секретная кнопка-кошечка: 3 нажатия открывают няшный режим, дальше - переключатель. */
+    /** Секретная кнопка-кошечка: 3 нажатия открывают няшный режим, дальше переключает темы. */
     private fun onCatTap(v: View) {
         if (prefs.getBoolean("kawaii_unlocked", false)) {
-            kawaii = !kawaii
-            prefs.edit().putBoolean("kawaii_on", kawaii).apply()
+            theme = (theme + 1) % 3
+            prefs.edit().putInt("theme", theme).apply()
             buildUi()
             return
         }
         catTaps++
         if (catTaps >= 3) {
-            prefs.edit().putBoolean("kawaii_unlocked", true).putBoolean("kawaii_on", true).apply()
-            kawaii = true
+            theme = 1
+            prefs.edit().putBoolean("kawaii_unlocked", true).putInt("theme", 1).apply()
             Strings.set(this, "rk")
             buildUi()
             toast(t("kawaii_on"))
         } else {
             ObjectAnimator.ofFloat(v, "rotation", 0f, -18f, 18f, -10f, 0f).setDuration(300).start()
+        }
+    }
+
+    /** Меняет выражение лица девочки; через delayMs возвращает обычное. */
+    private fun setMood(mood: String, delayMs: Long = 0) {
+        val girl = girlView ?: return
+        moodHandler.removeCallbacksAndMessages(null)
+        girl.setImageResource(
+            when (mood) {
+                "happy" -> R.drawable.kawaii_girl_happy
+                "sad" -> R.drawable.kawaii_girl_sad
+                "wink" -> R.drawable.kawaii_girl_wink
+                else -> R.drawable.kawaii_girl
+            }
+        )
+        if (mood != "normal" && delayMs > 0) {
+            moodHandler.postDelayed({ girlView?.setImageResource(R.drawable.kawaii_girl) }, delayMs)
         }
     }
 
@@ -195,12 +298,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(24), dp(16), dp(16))
             layoutDirection = if (Strings.isRtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
-            if (kawaii) {
-                background = GradientDrawable(
-                    GradientDrawable.Orientation.TL_BR,
-                    intArrayOf(0xFFFFC1E3.toInt(), 0xFFE0C3FF.toInt(), 0xFFBDE7FF.toInt())
-                )
-            }
+            if (kawaii) background = GradientDrawable(GradientDrawable.Orientation.TL_BR, bgColors)
         }
 
         // --- заголовок, выбор языка, секретная кнопка ---
@@ -242,14 +340,16 @@ class MainActivity : Activity() {
             }
         }
         langRow.addView(langSpinner)
-        val catButton = Button(this).apply {
-            text = "\uD83D\uDC31"
-            isAllCaps = false
-            textSize = 18f
-            minWidth = 0
-            minimumWidth = 0
+        val catButton = ImageView(this).apply {
+            setImageResource(R.drawable.ic_cat)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+            imageTintList = ColorStateList.valueOf(if (kawaii) kawaiiText else 0xFFFFFFFF.toInt())
+            background = circleBackground()
+            contentDescription = "cat"
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(10) }
             setOnClickListener { onCatTap(this) }
-            if (kawaii) styleKawaiiButton(this)
+            if (kawaii) attachPressEffect(this)
         }
         langRow.addView(catButton)
         headerLeft.addView(langRow)
@@ -261,6 +361,7 @@ class MainActivity : Activity() {
                 layoutParams = LinearLayout.LayoutParams(dp(110), dp(121))
                 setOnClickListener {
                     toast(t("girl_tap"))
+                    setMood("wink", 1500)
                     animate().scaleX(1.15f).scaleY(1.15f).setDuration(120).withEndAction {
                         animate().scaleX(1f).scaleY(1f).setDuration(200).start()
                     }.start()
@@ -279,6 +380,9 @@ class MainActivity : Activity() {
             })
             bob.start()
             header.addView(girl)
+            girlView = girl
+        } else {
+            girlView = null
         }
         root.addView(header)
 
@@ -287,18 +391,18 @@ class MainActivity : Activity() {
             hint = t("url_hint")
             inputType = InputType.TYPE_TEXT_VARIATION_URI
             setSingleLine(false)
-            maxLines = 3
+            maxLines = 4
             textDirection = View.TEXT_DIRECTION_LTR
             setText(oldUrl)
             if (kawaii) {
                 setTextColor(kawaiiText)
-                setHintTextColor(0x996A2C6B.toInt())
-                backgroundTintList = ColorStateList.valueOf(0xFFFF8FC7.toInt())
+                setHintTextColor((0x99 shl 24) or (kawaiiText and 0xFFFFFF))
+                backgroundTintList = ColorStateList.valueOf(accent)
             }
         }
         root.addView(urlInput)
 
-        val urlRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val urlRow = FitRow(this)
         urlRow.addView(button(t("paste")) { pasteFromClipboard() })
         urlRow.addView(button(t("clear")) { urlInput.setText("") })
         root.addView(urlRow)
@@ -307,7 +411,7 @@ class MainActivity : Activity() {
             text = t("playlist")
             isChecked = oldPlaylist
             tintText(this)
-            if (kawaii) buttonTintList = ColorStateList.valueOf(0xFFFF5FA2.toInt())
+            if (kawaii) buttonTintList = ColorStateList.valueOf(accent)
         }
         root.addView(playlistBox)
 
@@ -321,7 +425,7 @@ class MainActivity : Activity() {
         // --- папка загрузки ---
         pathText = TextView(this).apply { tintText(this) }
         root.addView(pathText)
-        val pathRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val pathRow = FitRow(this)
         pathRow.addView(button(t("pick_folder")) { pickFolder() })
         pathRow.addView(button(t("default_folder")) {
             prefs.edit().remove("tree_uri").apply()
@@ -344,7 +448,7 @@ class MainActivity : Activity() {
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = oldProgress
-            if (kawaii) progressTintList = ColorStateList.valueOf(0xFFFF5FA2.toInt())
+            if (kawaii) progressTintList = ColorStateList.valueOf(accent)
         }
         root.addView(progressBar)
 
@@ -359,11 +463,13 @@ class MainActivity : Activity() {
         }
         root.addView(statusText)
 
-        val toolsRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val toolsRow = FitRow(this)
         val bUpdate = button(t("update_btn")) { updateYtDlp() }
         val bProxy = button(t("proxy_btn")) { showProxyDialog() }
+        val bCookies = button(t("cookies_btn")) { showCookiesDialog() }
         toolsRow.addView(bUpdate)
         toolsRow.addView(bProxy)
+        toolsRow.addView(bCookies)
         root.addView(toolsRow)
 
         val bLog = button(t(if (logVisible) "hide_log" else "show_log")) {}
@@ -387,7 +493,7 @@ class MainActivity : Activity() {
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             textDirection = View.TEXT_DIRECTION_LTR
             text = oldLog
-            if (kawaii) setTextColor(0xFF5A3A78.toInt())
+            if (kawaii) setTextColor(logTextColor)
         }
         logScroll = ScrollView(this).apply {
             visibility = if (logVisible) View.VISIBLE else View.GONE
@@ -398,7 +504,7 @@ class MainActivity : Activity() {
             if (kawaii) {
                 background = GradientDrawable().apply {
                     cornerRadius = dp(16).toFloat()
-                    setColor(0x99FFFFFF.toInt())
+                    setColor(panelColor)
                 }
                 setPadding(dp(8), dp(8), dp(8), dp(8))
             }
@@ -406,7 +512,14 @@ class MainActivity : Activity() {
         root.addView(logScroll)
         logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
 
-        setContentView(root)
+        val frame = FrameLayout(this)
+        frame.addView(root, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        if (kawaii) {
+            frame.addView(FallingHearts(this, night, dp(1).toFloat()), FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+        setContentView(frame)
     }
 
     private fun handleShareIntent(i: Intent?) {
@@ -506,6 +619,29 @@ class MainActivity : Activity() {
             .show()
     }
 
+    // ---------------------------------------------------------------- Куки
+
+    private fun cookiesFile() = File(filesDir, "cookies.txt")
+
+    private fun showCookiesDialog() {
+        AlertDialog.Builder(this)
+            .setTitle(t("cookies_title"))
+            .setMessage(t("cookies_msg"))
+            .setPositiveButton(t("cookies_pick")) { _, _ ->
+                val i = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "*/*"
+                }
+                startActivityForResult(i, reqPickCookies)
+            }
+            .setNeutralButton(t("cookies_delete")) { _, _ ->
+                cookiesFile().delete()
+                toast(t("cookies_deleted"))
+            }
+            .setNegativeButton(t("cancel"), null)
+            .show()
+    }
+
     // ------------------------------------------------------ Папка загрузки
 
     private fun treeUri(): Uri? = prefs.getString("tree_uri", null)?.let { Uri.parse(it) }
@@ -536,6 +672,18 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == reqPickCookies && resultCode == RESULT_OK) {
+            val uri = data?.data ?: return
+            try {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    cookiesFile().outputStream().use { input.copyTo(it) }
+                }
+                toast(t("cookies_saved"))
+            } catch (e: Exception) {
+                log(f("log_cookies_fail", e.message))
+            }
+            return
+        }
         if (requestCode == reqPickFolder && resultCode == RESULT_OK) {
             val uri = data?.data ?: return
             try {
@@ -554,14 +702,19 @@ class MainActivity : Activity() {
 
     // ---------------------------------------------------------- Скачивание
 
-    private fun currentUrl(): String? {
-        val u = urlInput.text.toString().trim()
-        if (u.isEmpty()) {
+    /** Все ссылки из поля ввода (по одной в строке или через пробел). */
+    private fun currentUrls(): List<String>? {
+        val text = urlInput.text.toString().trim()
+        val found = Regex("https?://\\S+").findAll(text).map { it.value }.toList()
+        val list = if (found.isNotEmpty()) found else if (text.isNotEmpty()) listOf(text) else emptyList()
+        if (list.isEmpty()) {
             toast(t("enter_url"))
             return null
         }
-        return u
+        return list
     }
+
+    private fun currentUrl(): String? = currentUrls()?.first()
 
     private fun qualityFormat(): String = when (qualitySpinner.selectedItemPosition) {
         0 -> "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best"
@@ -580,20 +733,23 @@ class MainActivity : Activity() {
         req.addOption("--cache-dir", cacheDirYt.absolutePath)
         val proxy = prefs.getString("proxy", "").orEmpty()
         if (proxy.isNotEmpty()) req.addOption("--proxy", proxy)
+        if (cookiesFile().isFile && cookiesFile().length() > 0) {
+            req.addOption("--cookies", cookiesFile().absolutePath)
+        }
         return req
     }
 
     private fun startAuto() {
-        val url = currentUrl() ?: return
-        runDownload(url, playlistBox.isChecked) { req ->
+        val urls = currentUrls() ?: return
+        runDownload(urls, playlistBox.isChecked) { req ->
             req.addOption("-f", qualityFormat())
             req.addOption("--merge-output-format", "mp4")
         }
     }
 
     private fun startMp3() {
-        val url = currentUrl() ?: return
-        runDownload(url, playlistBox.isChecked) { req ->
+        val urls = currentUrls() ?: return
+        runDownload(urls, playlistBox.isChecked) { req ->
             req.addOption("-f", "bestaudio/best")
             req.addOption("-x")
             req.addOption("--audio-format", "mp3")
@@ -691,7 +847,7 @@ class MainActivity : Activity() {
     }
 
     private fun downloadFormat(url: String, playlist: Boolean, fmt: String) {
-        runDownload(url, playlist) { req ->
+        runDownload(listOf(url), playlist) { req ->
             req.addOption("-f", fmt)
             req.addOption("--merge-output-format", "mp4")
         }
@@ -739,79 +895,104 @@ class MainActivity : Activity() {
         return sb.toString()
     }
 
-    private fun runDownload(url: String, playlist: Boolean, configure: (YoutubeDLRequest) -> Unit) {
+    private fun runDownload(urls: List<String>, playlist: Boolean, configure: (YoutubeDLRequest) -> Unit) {
         if (!engineReady || busy) return
         setBusy(true)
         setStatus(t("st_downloading"))
         DownloadService.start(this)
         Thread {
-            var doneTitle = t("n_title")
-            var doneText = ""
-            val tmp = File(cacheDir, "dl").apply {
-                deleteRecursively()
-                mkdirs()
-            }
+            val tmp = File(cacheDir, "dl")
+            var saved = 0
+            var failed = 0
+            var stopped = false
+            var lastError = ""
             try {
-                val req = baseRequest(url, playlist)
-                configure(req)
-                req.addOption("--newline")
-                val template = if (playlist)
-                    "${tmp.absolutePath}/%(playlist_title|PlayList)s/%(playlist_index)s - %(title).120s [%(id)s].%(ext)s"
-                else
-                    "${tmp.absolutePath}/%(title).120s [%(id)s].%(ext)s"
-                req.addOption("-o", template)
+                for ((idx, url) in urls.withIndex()) {
+                    tmp.deleteRecursively()
+                    tmp.mkdirs()
+                    val prefix = if (urls.size > 1) "[${idx + 1}/${urls.size}] " else ""
+                    try {
+                        val req = baseRequest(url, playlist)
+                        configure(req)
+                        req.addOption("--newline")
+                        val template = if (playlist)
+                            "${tmp.absolutePath}/%(playlist_title|PlayList)s/%(playlist_index)s - %(title).120s [%(id)s].%(ext)s"
+                        else
+                            "${tmp.absolutePath}/%(title).120s [%(id)s].%(ext)s"
+                        req.addOption("-o", template)
 
-                YoutubeDL.getInstance().execute(req, processId) { progress, eta, line ->
-                    val info = progressText(eta, line)
-                    runOnUiThread {
-                        if (progress >= 0) progressBar.progress = progress.toInt()
-                        statusText.text = info ?: (t("st_downloading") + " ${progress.toInt()}%")
-                    }
-                    if (info != null) {
-                        val now = System.currentTimeMillis()
-                        if (now - lastNotifyAt > 700) {
-                            lastNotifyAt = now
-                            DownloadService.update(this, t("n_title"), info, progress.toInt())
+                        YoutubeDL.getInstance().execute(req, processId) { progress, eta, line ->
+                            val info = progressText(eta, line)?.let { prefix + it }
+                            runOnUiThread {
+                                if (progress >= 0) progressBar.progress = progress.toInt()
+                                statusText.text = info ?: (prefix + t("st_downloading") + " ${progress.toInt()}%")
+                            }
+                            if (info != null) {
+                                val now = System.currentTimeMillis()
+                                if (now - lastNotifyAt > 700) {
+                                    lastNotifyAt = now
+                                    DownloadService.update(this, t("n_title"), info, progress.toInt())
+                                }
+                            }
+                            if (!line.startsWith("[download]") || !line.contains("%")) log(line)
                         }
-                    }
-                    if (!line.startsWith("[download]") || !line.contains("%")) log(line)
-                }
 
-                setStatus(f("st_saving", targetLabel()))
-                val saved = saveToDownloads(tmp)
-                if (saved == 0) {
-                    doneTitle = t("n_error")
-                    doneText = t("st_no_files")
-                    setStatus(t("st_no_files"))
-                    log(t("log_no_files"))
-                } else {
-                    doneTitle = t("n_done_title")
-                    doneText = f("n_done_text", saved, targetLabel())
-                    setStatus(f("st_done", saved, targetLabel()))
-                    log(f("log_done", targetLabel()))
-                }
-            } catch (e: Throwable) {
-                val m = e.message.orEmpty()
-                if (m.contains("interrupted", true) || m.contains("destroyed", true)) {
-                    doneTitle = t("n_stopped")
-                    doneText = t("n_cancelled")
-                    setStatus(t("st_stopped"))
-                    log(t("log_stopped"))
-                } else {
-                    doneTitle = t("n_error")
-                    doneText = m.lineSequence().firstOrNull { it.isNotBlank() }?.take(160) ?: t("n_unknown")
-                    setStatus(t("st_error"))
-                    log(f("log_error", m))
-                    if (m.contains("sign in", true) || m.contains("Precondition", true)) {
-                        log(t("log_hint_signin"))
+                        setStatus(f("st_saving", targetLabel()))
+                        val n = saveToDownloads(tmp)
+                        if (n == 0) {
+                            failed++
+                            log(t("log_no_files"))
+                        } else {
+                            saved += n
+                        }
+                    } catch (e: Throwable) {
+                        val m = e.message.orEmpty()
+                        if (m.contains("interrupted", true) || m.contains("destroyed", true)) {
+                            stopped = true
+                            break
+                        }
+                        failed++
+                        lastError = m
+                        log(f("log_error", m))
+                        if (m.contains("sign in", true) || m.contains("Precondition", true)) {
+                            log(t("log_hint_signin"))
+                        }
                     }
                 }
             } finally {
                 tmp.deleteRecursively()
-                DownloadService.stop(this)
-                DownloadService.finish(this, doneTitle, doneText)
-                setBusy(false)
             }
+
+            val doneTitle: String
+            val doneText: String
+            val mood: String
+            when {
+                stopped -> {
+                    doneTitle = t("n_stopped")
+                    doneText = t("n_cancelled")
+                    mood = "normal"
+                    setStatus(t("st_stopped"))
+                    log(t("log_stopped"))
+                }
+                saved > 0 -> {
+                    doneTitle = t("n_done_title")
+                    doneText = f("n_done_text", saved, targetLabel())
+                    mood = "happy"
+                    setStatus(f("st_done", saved, targetLabel()))
+                    log(f("log_done", targetLabel()))
+                }
+                else -> {
+                    doneTitle = t("n_error")
+                    doneText = lastError.lineSequence().firstOrNull { it.isNotBlank() }?.take(160)
+                        ?: t("st_no_files")
+                    mood = "sad"
+                    setStatus(t("st_error"))
+                }
+            }
+            DownloadService.stop(this)
+            DownloadService.finish(this, doneTitle, doneText)
+            setBusy(false)
+            runOnUiThread { setMood(mood, 5000) }
         }.start()
     }
 
@@ -883,5 +1064,88 @@ class MainActivity : Activity() {
             count++
         }
         return count
+    }
+}
+
+
+/** Лёгкая анимация: медленно падающие сердечки (день) или звёздочки (ночь). Касания пропускает. */
+private class FallingHearts(ctx: Context, private val night: Boolean, private val density: Float) : View(ctx) {
+
+    private class Particle(
+        var x: Float, var y: Float, val size: Float, val speed: Float,
+        val phase: Float, val sway: Float, val heart: Boolean, val color: Int
+    )
+
+    private val particles = ArrayList<Particle>()
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val heart = Path().apply {
+        moveTo(0f, 1f)
+        cubicTo(-1.6f, -0.1f, -0.7f, -1.1f, 0f, -0.35f)
+        cubicTo(0.7f, -1.1f, 1.6f, -0.1f, 0f, 1f)
+        close()
+    }
+    private val star = Path().apply {
+        moveTo(0f, -1f)
+        quadTo(0.15f, -0.15f, 1f, 0f)
+        quadTo(0.15f, 0.15f, 0f, 1f)
+        quadTo(-0.15f, 0.15f, -1f, 0f)
+        quadTo(-0.15f, -0.15f, 0f, -1f)
+        close()
+    }
+    private var last = 0L
+    private var attached = false
+
+    private fun rand(a: Float, b: Float) = a + Math.random().toFloat() * (b - a)
+
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
+        super.onSizeChanged(w, h, ow, oh)
+        particles.clear()
+        val hearts = intArrayOf(0xFFFF8FC7.toInt(), 0xFFFFFFFF.toInt(), 0xFFFFB3D9.toInt(), 0xFFFF7FB0.toInt())
+        val stars = intArrayOf(0xFFFFF2A8.toInt(), 0xFFFFFFFF.toInt(), 0xFFD9C9FF.toInt())
+        repeat(16) { i ->
+            val isHeart = if (night) i % 4 == 0 else i % 3 != 0
+            val palette = if (isHeart) hearts else stars
+            particles.add(
+                Particle(
+                    rand(0f, w.toFloat()), rand(0f, h.toFloat()), rand(5f, 11f) * density,
+                    rand(18f, 42f) * density, rand(0f, 6.28f), rand(10f, 24f) * density,
+                    isHeart, palette[i % palette.size]
+                )
+            )
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        attached = true
+        last = 0L
+        postInvalidateOnAnimation()
+    }
+
+    override fun onDetachedFromWindow() {
+        attached = false
+        super.onDetachedFromWindow()
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val now = System.nanoTime()
+        val dt = if (last == 0L) 0f else ((now - last) / 1e9f).coerceAtMost(0.05f)
+        last = now
+        for (p in particles) {
+            p.y += p.speed * dt
+            if (p.y - p.size > height) {
+                p.y = -p.size
+                p.x = rand(0f, width.toFloat())
+            }
+            val x = p.x + sin(p.phase + p.y / (40f * density)) * p.sway
+            paint.color = p.color
+            paint.alpha = if (night) 150 else 130
+            canvas.save()
+            canvas.translate(x, p.y)
+            canvas.scale(p.size, p.size)
+            canvas.drawPath(if (p.heart) heart else star, paint)
+            canvas.restore()
+        }
+        if (attached) postInvalidateOnAnimation()
     }
 }

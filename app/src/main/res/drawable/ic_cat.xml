@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp" android:height="48dp"
+    android:viewportWidth="100" android:viewportHeight="100">
+    <!-- голова с ушками; глаза и носик вырезаны (evenOdd), поэтому иконку можно красить в любой цвет -->
+    <path
+        android:fillColor="#000000"
+        android:fillType="evenOdd"
+        android:pathData="M18,14 Q23,8 29,13 L43,27 Q50,25 57,27 L71,13 Q77,8 82,14 Q84,30 83,42 Q90,52 86,64 Q80,86 50,90 Q20,86 14,64 Q10,52 17,42 Q16,30 18,14 Z M36,49 a5,7 0 1,0 0.01,0 Z M64,49 a5,7 0 1,0 0.01,0 Z M44,67 Q50,65 56,67 Q54,72 50,75 Q46,72 44,67 Z" />
+    <path
+        android:pathData="M12,62 L2,60 M15,72 L5,77 M88,62 L98,60 M85,72 L95,77"
+        android:strokeColor="#000000"
+        android:strokeWidth="4"
+        android:strokeLineCap="round" />
+</vector>
