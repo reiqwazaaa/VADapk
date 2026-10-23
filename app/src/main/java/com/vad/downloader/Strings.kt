@@ -5,7 +5,7 @@ import java.util.Locale
 
 /** Переводы интерфейса: 15 самых распространённых языков мира. Запасной язык - английский. */
 object Strings {
-    class Lang(val code: String, val name: String, val rtl: Boolean = false)
+    class Lang(val code: String, val name: String, val rtl: Boolean = false, val hidden: Boolean = false)
 
     val languages = listOf(
         Lang("en", "English"),
@@ -23,7 +23,11 @@ object Strings {
         Lang("ja", "日本語"),
         Lang("tr", "Türkçe"),
         Lang("ko", "한국어"),
+        Lang("rk", "Няшный Русский", hidden = true), // открывается секретной кнопкой
     )
+
+    /** Языки для выпадающего списка; «Няшный Русский» виден только после разблокировки. */
+    fun available(unlocked: Boolean): List<Lang> = languages.filter { !it.hidden || unlocked }
 
     var code: String = "en"
         private set
@@ -32,7 +36,8 @@ object Strings {
 
     fun init(ctx: Context) {
         val saved = ctx.getSharedPreferences("vad", Context.MODE_PRIVATE).getString("lang", null)
-        code = if (saved != null && languages.any { it.code == saved }) saved else detect()
+        val unlocked = ctx.getSharedPreferences("vad", Context.MODE_PRIVATE).getBoolean("kawaii_unlocked", false)
+        code = if (saved != null && available(unlocked).any { it.code == saved }) saved else detect()
     }
 
     fun set(ctx: Context, newCode: String) {
@@ -68,6 +73,7 @@ object Strings {
             "ja" -> ja()
             "tr" -> tr()
             "ko" -> ko()
+            "rk" -> rk()
             else -> en()
         }
     }
@@ -147,6 +153,8 @@ object Strings {
         "n_stopped" to "Stopped",
         "n_cancelled" to "Download cancelled",
         "n_unknown" to "Unknown error",
+        "kawaii_on" to "Kawaii mode unlocked! ^-^",
+        "girl_tap" to "Nya~!",
     )
 
     private fun ru() = mapOf(
@@ -1225,5 +1233,84 @@ object Strings {
         "n_stopped" to "중지됨",
         "n_cancelled" to "다운로드가 취소되었습니다",
         "n_unknown" to "알 수 없는 오류",
+    )
+
+    private fun rk() = mapOf(
+        "title" to "Няшный Загрузчик ^-^",
+        "lang_label" to "Язычок",
+        "url_hint" to "Ссылочка на видосик",
+        "paste" to "Вставить из буферка",
+        "clear" to "Стереть",
+        "playlist" to "Скачать весь плейлистик",
+        "quality_label" to "Качество (авто-режим)",
+        "q_max" to "Максимум",
+        "folder" to "Папочка для загрузок: %s",
+        "pick_folder" to "Выбрать папочку…",
+        "default_folder" to "По умолчанию",
+        "folder_chosen" to "Папочка выбрана ^-^",
+        "dl_auto" to "Скачать видосик ^-^",
+        "dl_pick" to "Скачать, выбрав формат…",
+        "dl_mp3" to "Скачать музычку (MP3) ♪",
+        "cancel" to "Отмена",
+        "st_starting" to "Просыпаюсь… ня~",
+        "st_ready" to "Я готова! Кидай ссылочку ^-^",
+        "update_btn" to "Обновить yt-dlp",
+        "proxy_btn" to "Прокси…",
+        "proxy_title" to "Прокси (пусто - выключен)",
+        "proxy_msg" to "Чтобы обойти блокировочки, можно взять приложение ByeDPI/VPN со SOCKS5.",
+        "proxy_hint" to "например socks5://127.0.0.1:1080",
+        "save" to "Сохранить",
+        "saved" to "Сохранила ^-^",
+        "clip_empty" to "В буферке пусто :(",
+        "enter_url" to "Дай ссылочку на видосик, пожалуйста ^-^",
+        "st_updating" to "Обновляю yt-dlp… ня~",
+        "log_autoupdated" to "yt-dlp сам обновился, ура! ^-^",
+        "log_autoupdate_fail" to "Авто-обновление yt-dlp не получилось :( %s",
+        "log_update_done" to "yt-dlp: обновление завершено, ура! (%s)",
+        "st_update_done" to "yt-dlp обновлён ^-^",
+        "log_update_fail" to "Ой, ошибка обновления: %s",
+        "st_update_fail" to "Не получилось обновить yt-dlp :(",
+        "st_init_fail" to "Движок не проснулся :(",
+        "log_init_fail" to "Ошибка инициализации: %s",
+        "st_formats" to "Ищу форматики…",
+        "log_formats_for" to "Форматики для: %s",
+        "st_choose" to "Выбери форматик ^-^",
+        "log_no_video" to "Видеоформатиков нет :( Попробуй авто-режим или MP3.",
+        "log_error" to "Ой, ошибка: %s",
+        "st_formats_fail" to "Не нашла форматики :(",
+        "video" to "Видосик",
+        "audio" to "Звучок",
+        "best_audio" to "Самый лучший звучок",
+        "with_sound" to "(со звуком)",
+        "no_sound" to "(без звука)",
+        "log_stopping" to "Останавливаюсь…",
+        "log_stop_fail" to "Не получилось остановить: %s",
+        "st_downloading" to "Качаю видосик… ня~",
+        "st_saving" to "Складываю в %s…",
+        "st_no_files" to "Файликов нет :(",
+        "log_no_files" to "Скачалось, но файликов почему-то нет :(",
+        "st_done" to "Готово! Файликов сохранено: %d (%s) ^-^",
+        "log_done" to "Готово! Файлики лежат в %s ^-^",
+        "st_stopped" to "Остановлено",
+        "log_stopped" to "Остановила, как просили.",
+        "st_error" to "Ой, ошибка скачивания :(",
+        "log_hint_signin" to "Подсказочка: нажми «Обновить yt-dlp» и попробуй ещё раз; не помогло - включи прокси/VPN.",
+        "log_saved_file" to "Сохранила: %s",
+        "log_saf_fail" to "Не вышло сохранить в выбранную папочку (%s). Кладу в Download/VAD.",
+        "log_perm_fail" to "Не смогла запомнить доступ к папочке: %s",
+        "mb" to "МБ",
+        "mbs" to "МБ/с",
+        "left" to "ещё %s",
+        "n_title" to "Качаю видосик…",
+        "n_prep" to "Готовлюсь…",
+        "n_channel" to "Загрузочки",
+        "n_done_title" to "Скачано! ^-^",
+        "n_done_text" to "Файликов сохранено: %d (%s)",
+        "n_error" to "Ой, ошибка",
+        "n_stopped" to "Остановлено",
+        "n_cancelled" to "Скачивание отменено",
+        "n_unknown" to "Неизвестная ошибочка",
+        "kawaii_on" to "Няшный режим включён! ^-^",
+        "girl_tap" to "Ня~!",
     )
 }

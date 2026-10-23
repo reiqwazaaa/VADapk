@@ -1,6 +1,7 @@
 package com.vad.downloader
 
 import android.Manifest
+import android.animation.ObjectAnimator
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipboardManager
@@ -8,7 +9,11 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.InsetDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -18,13 +23,17 @@ import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.text.InputType
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
+import android.view.animation.OvershootInterpolator
 import android.webkit.MimeTypeMap
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
@@ -59,6 +68,10 @@ class MainActivity : Activity() {
     private lateinit var actionButtons: List<Button>
     private lateinit var cancelButton: Button
 
+    private var kawaii = false
+    private var catTaps = 0
+    private val kawaiiText = 0xFF6A2C6B.toInt()
+
     @Volatile private var engineReady = false
     @Volatile private var busy = false
 
@@ -72,6 +85,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Strings.init(this)
+        kawaii = prefs.getBoolean("kawaii_unlocked", false) && prefs.getBoolean("kawaii_on", false)
         buildUi()
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -94,7 +108,76 @@ class MainActivity : Activity() {
             this.text = text
             isAllCaps = false
             setOnClickListener { onClick() }
+            if (kawaii) styleKawaiiButton(this)
         }
+
+    private fun tintText(tv: TextView) {
+        if (kawaii) tv.setTextColor(kawaiiText)
+    }
+
+    private fun styledAdapter(items: List<String>): ArrayAdapter<String> =
+        object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_spinner_item, items) {
+            init {
+                setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+            }
+
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val v = super.getView(position, convertView, parent)
+                if (kawaii) (v as? TextView)?.setTextColor(kawaiiText)
+                return v
+            }
+        }
+
+    /** Няшные кнопки: градиент, скругления, ripple и «пружинка» при нажатии. */
+    private fun styleKawaiiButton(b: Button) {
+        val r = dp(24).toFloat()
+        val shape = GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(0xFFFF9ACB.toInt(), 0xFFFFC2E5.toInt())
+        ).apply {
+            cornerRadius = r
+            setStroke(dp(2), 0xFFFFFFFF.toInt())
+        }
+        val mask = GradientDrawable().apply {
+            cornerRadius = r
+            setColor(0xFFFFFFFF.toInt())
+        }
+        val ripple = RippleDrawable(ColorStateList.valueOf(0x99FFFFFF.toInt()), shape, mask)
+        b.background = InsetDrawable(ripple, dp(4), dp(3), dp(4), dp(3))
+        b.setTextColor(kawaiiText)
+        b.setTypeface(b.typeface, Typeface.BOLD)
+        b.stateListAnimator = null
+        b.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN ->
+                    v.animate().scaleX(0.92f).scaleY(0.92f).setDuration(90).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    v.animate().scaleX(1f).scaleY(1f).setDuration(260)
+                        .setInterpolator(OvershootInterpolator(3f)).start()
+            }
+            false
+        }
+    }
+
+    /** Секретная кнопка-кошечка: 3 нажатия открывают няшный режим, дальше - переключатель. */
+    private fun onCatTap(v: View) {
+        if (prefs.getBoolean("kawaii_unlocked", false)) {
+            kawaii = !kawaii
+            prefs.edit().putBoolean("kawaii_on", kawaii).apply()
+            buildUi()
+            return
+        }
+        catTaps++
+        if (catTaps >= 3) {
+            prefs.edit().putBoolean("kawaii_unlocked", true).putBoolean("kawaii_on", true).apply()
+            kawaii = true
+            Strings.set(this, "rk")
+            buildUi()
+            toast(t("kawaii_on"))
+        } else {
+            ObjectAnimator.ofFloat(v, "rotation", 0f, -18f, 18f, -10f, 0f).setDuration(300).start()
+        }
+    }
 
     /** Строит интерфейс заново (при первом запуске и при смене языка), сохраняя состояние. */
     private fun buildUi() {
@@ -111,13 +194,25 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(24), dp(16), dp(16))
             layoutDirection = if (Strings.isRtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
+            if (kawaii) {
+                background = GradientDrawable(
+                    GradientDrawable.Orientation.TL_BR,
+                    intArrayOf(0xFFFFC1E3.toInt(), 0xFFE0C3FF.toInt(), 0xFFBDE7FF.toInt())
+                )
+            }
         }
 
-        // --- заголовок и выбор языка ---
-        root.addView(TextView(this).apply {
+        // --- заголовок, выбор языка, секретная кнопка ---
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val headerLeft = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        headerLeft.addView(TextView(this).apply {
             text = t("title")
             textSize = 22f
             setTypeface(typeface, Typeface.BOLD)
+            tintText(this)
         })
 
         val langRow = LinearLayout(this).apply {
@@ -127,17 +222,15 @@ class MainActivity : Activity() {
         langRow.addView(TextView(this).apply {
             text = t("lang_label") + ": "
             setPadding(0, 0, dp(8), 0)
+            tintText(this)
         })
+        val langList = Strings.available(prefs.getBoolean("kawaii_unlocked", false))
         val langSpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                Strings.languages.map { it.name }
-            )
-            setSelection(Strings.languages.indexOfFirst { it.code == Strings.code }.coerceAtLeast(0))
+            adapter = styledAdapter(langList.map { it.name })
+            setSelection(langList.indexOfFirst { it.code == Strings.code }.coerceAtLeast(0))
             onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                    val code = Strings.languages[pos].code
+                    val code = langList[pos].code
                     if (code != Strings.code) {
                         Strings.set(this@MainActivity, code)
                         Handler(Looper.getMainLooper()).post { buildUi() }
@@ -148,7 +241,45 @@ class MainActivity : Activity() {
             }
         }
         langRow.addView(langSpinner)
-        root.addView(langRow)
+        val catButton = Button(this).apply {
+            text = "\uD83D\uDC31"
+            isAllCaps = false
+            textSize = 18f
+            minWidth = 0
+            minimumWidth = 0
+            setOnClickListener { onCatTap(this) }
+            if (kawaii) styleKawaiiButton(this)
+        }
+        langRow.addView(catButton)
+        headerLeft.addView(langRow)
+        header.addView(headerLeft, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        if (kawaii) {
+            val girl = ImageView(this).apply {
+                setImageResource(R.drawable.kawaii_girl)
+                layoutParams = LinearLayout.LayoutParams(dp(110), dp(121))
+                setOnClickListener {
+                    toast(t("girl_tap"))
+                    animate().scaleX(1.15f).scaleY(1.15f).setDuration(120).withEndAction {
+                        animate().scaleX(1f).scaleY(1f).setDuration(200).start()
+                    }.start()
+                }
+            }
+            val bob = ObjectAnimator.ofFloat(girl, "translationY", 0f, -dp(6).toFloat()).apply {
+                duration = 1100
+                repeatCount = ObjectAnimator.INFINITE
+                repeatMode = ObjectAnimator.REVERSE
+            }
+            girl.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(v: View) {}
+                override fun onViewDetachedFromWindow(v: View) {
+                    bob.cancel()
+                }
+            })
+            bob.start()
+            header.addView(girl)
+        }
+        root.addView(header)
 
         // --- ссылка ---
         urlInput = EditText(this).apply {
@@ -158,6 +289,11 @@ class MainActivity : Activity() {
             maxLines = 3
             textDirection = View.TEXT_DIRECTION_LTR
             setText(oldUrl)
+            if (kawaii) {
+                setTextColor(kawaiiText)
+                setHintTextColor(0x996A2C6B.toInt())
+                backgroundTintList = ColorStateList.valueOf(0xFFFF8FC7.toInt())
+            }
         }
         root.addView(urlInput)
 
@@ -169,22 +305,20 @@ class MainActivity : Activity() {
         playlistBox = CheckBox(this).apply {
             text = t("playlist")
             isChecked = oldPlaylist
+            tintText(this)
+            if (kawaii) buttonTintList = ColorStateList.valueOf(0xFFFF5FA2.toInt())
         }
         root.addView(playlistBox)
 
         qualitySpinner = Spinner(this).apply {
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_dropdown_item,
-                listOf("FHD (1080p)", "HD (720p)", t("q_max"))
-            )
+            adapter = styledAdapter(listOf("FHD (1080p)", "HD (720p)", t("q_max")))
             setSelection(oldQuality)
         }
-        root.addView(TextView(this).apply { text = t("quality_label") })
+        root.addView(TextView(this).apply { text = t("quality_label"); tintText(this) })
         root.addView(qualitySpinner)
 
         // --- папка загрузки ---
-        pathText = TextView(this)
+        pathText = TextView(this).apply { tintText(this) }
         root.addView(pathText)
         val pathRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         pathRow.addView(button(t("pick_folder")) { pickFolder() })
@@ -209,6 +343,7 @@ class MainActivity : Activity() {
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = oldProgress
+            if (kawaii) progressTintList = ColorStateList.valueOf(0xFFFF5FA2.toInt())
         }
         root.addView(progressBar)
 
@@ -219,6 +354,7 @@ class MainActivity : Activity() {
                 engineReady -> t("st_ready")
                 else -> t("st_starting")
             }
+            tintText(this)
         }
         root.addView(statusText)
 
@@ -241,12 +377,20 @@ class MainActivity : Activity() {
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             textDirection = View.TEXT_DIRECTION_LTR
             text = oldLog
+            if (kawaii) setTextColor(0xFF5A3A78.toInt())
         }
         logScroll = ScrollView(this).apply {
             addView(logText)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
             )
+            if (kawaii) {
+                background = GradientDrawable().apply {
+                    cornerRadius = dp(16).toFloat()
+                    setColor(0x99FFFFFF.toInt())
+                }
+                setPadding(dp(8), dp(8), dp(8), dp(8))
+            }
         }
         root.addView(logScroll)
         logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
