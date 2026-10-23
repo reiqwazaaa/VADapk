@@ -153,6 +153,8 @@ object Strings {
         "n_stopped" to "Stopped",
         "n_cancelled" to "Download cancelled",
         "n_unknown" to "Unknown error",
+        "show_log" to "Show log",
+        "hide_log" to "Hide log",
         "kawaii_on" to "Kawaii mode unlocked! ^-^",
         "girl_tap" to "Nya~!",
     )
@@ -232,6 +234,8 @@ object Strings {
         "n_stopped" to "Остановлено",
         "n_cancelled" to "Скачивание отменено",
         "n_unknown" to "Неизвестная ошибка",
+        "show_log" to "Показать лог",
+        "hide_log" to "Скрыть лог",
     )
 
     private fun zh() = mapOf(
@@ -309,6 +313,8 @@ object Strings {
         "n_stopped" to "已停止",
         "n_cancelled" to "下载已取消",
         "n_unknown" to "未知错误",
+        "show_log" to "显示日志",
+        "hide_log" to "隐藏日志",
     )
 
     private fun hi() = mapOf(
@@ -386,6 +392,8 @@ object Strings {
         "n_stopped" to "रोका गया",
         "n_cancelled" to "डाउनलोड रद्द किया गया",
         "n_unknown" to "अज्ञात त्रुटि",
+        "show_log" to "लॉग दिखाएँ",
+        "hide_log" to "लॉग छिपाएँ",
     )
 
     private fun es() = mapOf(
@@ -463,6 +471,8 @@ object Strings {
         "n_stopped" to "Detenido",
         "n_cancelled" to "Descarga cancelada",
         "n_unknown" to "Error desconocido",
+        "show_log" to "Mostrar registro",
+        "hide_log" to "Ocultar registro",
     )
 
     private fun ar() = mapOf(
@@ -540,6 +550,8 @@ object Strings {
         "n_stopped" to "تم الإيقاف",
         "n_cancelled" to "تم إلغاء التنزيل",
         "n_unknown" to "خطأ غير معروف",
+        "show_log" to "إظهار السجل",
+        "hide_log" to "إخفاء السجل",
     )
 
     private fun fr() = mapOf(
@@ -617,6 +629,8 @@ object Strings {
         "n_stopped" to "Arrêté",
         "n_cancelled" to "Téléchargement annulé",
         "n_unknown" to "Erreur inconnue",
+        "show_log" to "Afficher le journal",
+        "hide_log" to "Masquer le journal",
     )
 
     private fun bn() = mapOf(
@@ -694,6 +708,8 @@ object Strings {
         "n_stopped" to "থামানো হয়েছে",
         "n_cancelled" to "ডাউনলোড বাতিল হয়েছে",
         "n_unknown" to "অজানা ত্রুটি",
+        "show_log" to "লগ দেখান",
+        "hide_log" to "লগ লুকান",
     )
 
     private fun pt() = mapOf(
@@ -771,6 +787,8 @@ object Strings {
         "n_stopped" to "Parado",
         "n_cancelled" to "Download cancelado",
         "n_unknown" to "Erro desconhecido",
+        "show_log" to "Mostrar log",
+        "hide_log" to "Ocultar log",
     )
 
     private fun ur() = mapOf(
@@ -848,6 +866,8 @@ object Strings {
         "n_stopped" to "روک دیا گیا",
         "n_cancelled" to "ڈاؤن لوڈ منسوخ ہو گیا",
         "n_unknown" to "نامعلوم خرابی",
+        "show_log" to "لاگ دکھائیں",
+        "hide_log" to "لاگ چھپائیں",
     )
 
     private fun idn() = mapOf(
@@ -925,6 +945,8 @@ object Strings {
         "n_stopped" to "Dihentikan",
         "n_cancelled" to "Unduhan dibatalkan",
         "n_unknown" to "Kesalahan tidak dikenal",
+        "show_log" to "Tampilkan log",
+        "hide_log" to "Sembunyikan log",
     )
 
     private fun de() = mapOf(
@@ -1002,6 +1024,8 @@ object Strings {
         "n_stopped" to "Gestoppt",
         "n_cancelled" to "Download abgebrochen",
         "n_unknown" to "Unbekannter Fehler",
+        "show_log" to "Protokoll anzeigen",
+        "hide_log" to "Protokoll ausblenden",
     )
 
     private fun ja() = mapOf(
@@ -1079,6 +1103,8 @@ object Strings {
         "n_stopped" to "停止しました",
         "n_cancelled" to "ダウンロードをキャンセルしました",
         "n_unknown" to "不明なエラー",
+        "show_log" to "ログを表示",
+        "hide_log" to "ログを隠す",
     )
 
     private fun tr() = mapOf(
@@ -1156,6 +1182,8 @@ object Strings {
         "n_stopped" to "Durduruldu",
         "n_cancelled" to "İndirme iptal edildi",
         "n_unknown" to "Bilinmeyen hata",
+        "show_log" to "Günlüğü göster",
+        "hide_log" to "Günlüğü gizle",
     )
 
     private fun ko() = mapOf(
@@ -1233,6 +1261,8 @@ object Strings {
         "n_stopped" to "중지됨",
         "n_cancelled" to "다운로드가 취소되었습니다",
         "n_unknown" to "알 수 없는 오류",
+        "show_log" to "로그 보기",
+        "hide_log" to "로그 숨기기",
     )
 
     private fun rk() = mapOf(
@@ -1310,6 +1340,8 @@ object Strings {
         "n_stopped" to "Остановлено",
         "n_cancelled" to "Скачивание отменено",
         "n_unknown" to "Неизвестная ошибочка",
+        "show_log" to "Подглядеть лог ^-^",
+        "hide_log" to "Спрятать лог",
         "kawaii_on" to "Няшный режим включён! ^-^",
         "girl_tap" to "Ня~!",
     )

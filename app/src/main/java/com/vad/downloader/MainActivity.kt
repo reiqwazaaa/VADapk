@@ -70,6 +70,7 @@ class MainActivity : Activity() {
 
     private var kawaii = false
     private var catTaps = 0
+    private var logVisible = false
     private val kawaiiText = 0xFF6A2C6B.toInt()
 
     @Volatile private var engineReady = false
@@ -365,6 +366,15 @@ class MainActivity : Activity() {
         toolsRow.addView(bProxy)
         root.addView(toolsRow)
 
+        val bLog = button(t(if (logVisible) "hide_log" else "show_log")) {}
+        bLog.setOnClickListener {
+            logVisible = !logVisible
+            logScroll.visibility = if (logVisible) View.VISIBLE else View.GONE
+            bLog.text = t(if (logVisible) "hide_log" else "show_log")
+            if (logVisible) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+        }
+        root.addView(bLog)
+
         actionButtons = listOf(bAuto, bPick, bMp3, bUpdate)
         actionButtons.forEach { it.isEnabled = engineReady && !busy }
         cancelButton.isEnabled = busy
@@ -380,6 +390,7 @@ class MainActivity : Activity() {
             if (kawaii) setTextColor(0xFF5A3A78.toInt())
         }
         logScroll = ScrollView(this).apply {
+            visibility = if (logVisible) View.VISIBLE else View.GONE
             addView(logText)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
