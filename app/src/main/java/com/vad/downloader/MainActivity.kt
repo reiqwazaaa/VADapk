@@ -273,6 +273,11 @@ class MainActivity : Activity() {
         val req = YoutubeDLRequest(url)
         req.addOption(if (playlist) "--yes-playlist" else "--no-playlist")
         req.addOption("--windows-filenames")
+        // На Android нет записываемого /tmp: временные файлы и кэш держим в папке приложения
+        val tmpDir = File(cacheDir, "ytmp").apply { mkdirs() }
+        val cacheDirYt = File(cacheDir, "ytcache").apply { mkdirs() }
+        req.addOption("--paths", "temp:" + tmpDir.absolutePath)
+        req.addOption("--cache-dir", cacheDirYt.absolutePath)
         val proxy = prefs.getString("proxy", "").orEmpty()
         if (proxy.isNotEmpty()) req.addOption("--proxy", proxy)
         return req
