@@ -4,6 +4,7 @@ import android.Manifest
 import android.animation.ObjectAnimator
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
 import android.content.Context
@@ -51,6 +52,8 @@ import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import org.json.JSONObject
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 import kotlin.math.sin
 
@@ -80,7 +83,10 @@ class MainActivity : Activity() {
     private val kawaii: Boolean get() = theme > 0
     private val night: Boolean get() = theme == 2
     private var catTaps = 0
-    private var logVisible = false
+    private var tab = 0
+    private val logLock = Any()
+    private val logBuf = StringBuilder()
+    private val tsFmt = SimpleDateFormat("HH:mm:ss", Locale.US)
     private var girlView: ImageView? = null
     private val moodHandler = Handler(Looper.getMainLooper())
     private val reqPickCookies = 43
@@ -109,6 +115,10 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Strings.init(this)
+        try {
+            if (logFile().isFile) logBuf.append(logFile().readText().takeLast(200_000))
+        } catch (_: Exception) {
+        }
         theme = if (prefs.getBoolean("kawaii_unlocked", false))
             prefs.getInt("theme", if (prefs.getBoolean("kawaii_on", false)) 1 else 0)
         else 0
@@ -290,7 +300,6 @@ class MainActivity : Activity() {
         val oldUrl = if (first) "" else urlInput.text.toString()
         val oldPlaylist = if (first) false else playlistBox.isChecked
         val oldQuality = if (first) 0 else qualitySpinner.selectedItemPosition
-        val oldLog = if (first) "" else logText.text.toString()
         val oldProgress = if (first) 0 else progressBar.progress
         val oldStatus = if (first) null else statusText.text.toString()
 
@@ -386,6 +395,8 @@ class MainActivity : Activity() {
         }
         root.addView(header)
 
+        val main = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
         // --- ссылка ---
         urlInput = EditText(this).apply {
             hint = t("url_hint")
@@ -400,12 +411,12 @@ class MainActivity : Activity() {
                 backgroundTintList = ColorStateList.valueOf(accent)
             }
         }
-        root.addView(urlInput)
+        main.addView(urlInput)
 
         val urlRow = FitRow(this)
         urlRow.addView(button(t("paste")) { pasteFromClipboard() })
         urlRow.addView(button(t("clear")) { urlInput.setText("") })
-        root.addView(urlRow)
+        main.addView(urlRow)
 
         playlistBox = CheckBox(this).apply {
             text = t("playlist")
@@ -413,44 +424,44 @@ class MainActivity : Activity() {
             tintText(this)
             if (kawaii) buttonTintList = ColorStateList.valueOf(accent)
         }
-        root.addView(playlistBox)
+        main.addView(playlistBox)
 
         qualitySpinner = Spinner(this).apply {
             adapter = styledAdapter(listOf("FHD (1080p)", "HD (720p)", t("q_max")))
             setSelection(oldQuality)
         }
-        root.addView(TextView(this).apply { text = t("quality_label"); tintText(this) })
-        root.addView(qualitySpinner)
+        main.addView(TextView(this).apply { text = t("quality_label"); tintText(this) })
+        main.addView(qualitySpinner)
 
         // --- папка загрузки ---
         pathText = TextView(this).apply { tintText(this) }
-        root.addView(pathText)
+        main.addView(pathText)
         val pathRow = FitRow(this)
         pathRow.addView(button(t("pick_folder")) { pickFolder() })
         pathRow.addView(button(t("default_folder")) {
             prefs.edit().remove("tree_uri").apply()
             refreshPath()
         })
-        root.addView(pathRow)
+        main.addView(pathRow)
         refreshPath()
 
         // --- кнопки действий ---
         val bAuto = button(t("dl_auto")) { startAuto() }
         val bPick = button(t("dl_pick")) { startPickFormat() }
         val bMp3 = button(t("dl_mp3")) { startMp3() }
-        root.addView(bAuto)
-        root.addView(bPick)
-        root.addView(bMp3)
+        main.addView(bAuto)
+        main.addView(bPick)
+        main.addView(bMp3)
 
         cancelButton = button(t("cancel")) { cancelDownload() }
-        root.addView(cancelButton)
+        main.addView(cancelButton)
 
         progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = oldProgress
             if (kawaii) progressTintList = ColorStateList.valueOf(accent)
         }
-        root.addView(progressBar)
+        main.addView(progressBar)
 
         statusText = TextView(this).apply {
             text = when {
@@ -461,7 +472,7 @@ class MainActivity : Activity() {
             }
             tintText(this)
         }
-        root.addView(statusText)
+        main.addView(statusText)
 
         val toolsRow = FitRow(this)
         val bUpdate = button(t("update_btn")) { updateYtDlp() }
@@ -470,33 +481,25 @@ class MainActivity : Activity() {
         toolsRow.addView(bUpdate)
         toolsRow.addView(bProxy)
         toolsRow.addView(bCookies)
-        root.addView(toolsRow)
+        main.addView(toolsRow)
 
-        val bLog = button(t(if (logVisible) "hide_log" else "show_log")) {}
-        bLog.setOnClickListener {
-            logVisible = !logVisible
-            logScroll.visibility = if (logVisible) View.VISIBLE else View.GONE
-            bLog.text = t(if (logVisible) "hide_log" else "show_log")
-            if (logVisible) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
-        }
-        root.addView(bLog)
 
         actionButtons = listOf(bAuto, bPick, bMp3, bUpdate)
         actionButtons.forEach { it.isEnabled = engineReady && !busy }
         cancelButton.isEnabled = busy
 
-        // --- лог (всегда слева направо) ---
+        // --- вкладка «Лог» (текст всегда слева направо) ---
         logText = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             textSize = 12f
             gravity = Gravity.START
             layoutDirection = View.LAYOUT_DIRECTION_LTR
             textDirection = View.TEXT_DIRECTION_LTR
-            text = oldLog
+            setTextIsSelectable(true)
+            text = synchronized(logLock) { logBuf.toString() }
             if (kawaii) setTextColor(logTextColor)
         }
         logScroll = ScrollView(this).apply {
-            visibility = if (logVisible) View.VISIBLE else View.GONE
             addView(logText)
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f
@@ -509,8 +512,38 @@ class MainActivity : Activity() {
                 setPadding(dp(8), dp(8), dp(8), dp(8))
             }
         }
-        root.addView(logScroll)
-        logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+        val logButtons = FitRow(this)
+        logButtons.addView(button(t("log_copy")) { copyLog() })
+        logButtons.addView(button(t("log_share")) { shareLog() })
+        logButtons.addView(button(t("log_save")) { saveLog() })
+        logButtons.addView(button(t("log_clear")) { clearLog() })
+        val logPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        logPane.addView(logButtons)
+        logPane.addView(logScroll)
+
+        val mainScroll = ScrollView(this).apply { addView(main) }
+        val content = FrameLayout(this)
+        val matchBoth = ViewGroup.LayoutParams.MATCH_PARENT
+        content.addView(mainScroll, FrameLayout.LayoutParams(matchBoth, matchBoth))
+        content.addView(logPane, FrameLayout.LayoutParams(matchBoth, matchBoth))
+
+        val bTabMain = button(t("tab_main")) {}
+        val bTabLog = button(t("tab_log")) {}
+        fun applyTab() {
+            mainScroll.visibility = if (tab == 0) View.VISIBLE else View.GONE
+            logPane.visibility = if (tab == 1) View.VISIBLE else View.GONE
+            bTabMain.alpha = if (tab == 0) 1f else 0.5f
+            bTabLog.alpha = if (tab == 1) 1f else 0.5f
+            if (tab == 1) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+        }
+        bTabMain.setOnClickListener { tab = 0; applyTab() }
+        bTabLog.setOnClickListener { tab = 1; applyTab() }
+        val tabRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        tabRow.addView(bTabMain, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        tabRow.addView(bTabLog, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(tabRow)
+        root.addView(content, LinearLayout.LayoutParams(matchBoth, 0, 1f))
+        applyTab()
 
         val frame = FrameLayout(this)
         frame.addView(root, FrameLayout.LayoutParams(
@@ -538,9 +571,87 @@ class MainActivity : Activity() {
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 
-    private fun log(line: String) = runOnUiThread {
-        logText.append(line + "\n")
-        logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+    private fun logFile() = File(filesDir, "vad.log")
+
+    private fun log(line: String) {
+        val entry = tsFmt.format(Date()) + " " + line + "\n"
+        synchronized(logLock) {
+            logBuf.append(entry)
+            if (logBuf.length > 400_000) logBuf.delete(0, logBuf.length - 300_000)
+            try {
+                logFile().appendText(entry)
+                if (logFile().length() > 600_000) logFile().writeText(logBuf.toString())
+            } catch (_: Exception) {
+            }
+        }
+        runOnUiThread {
+            logText.append(entry)
+            if (logText.length() > 150_000) {
+                logText.text = synchronized(logLock) { logBuf.takeLast(100_000).toString() }
+            }
+            logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+        }
+    }
+
+    /** Строка с данными об устройстве и настройках - чтобы лог было проще разбирать. */
+    private fun logHeader(): String {
+        val ver = try {
+            packageManager.getPackageInfo(packageName, 0).versionName
+        } catch (_: Exception) {
+            "?"
+        }
+        val proxyOn = prefs.getString("proxy", "").orEmpty().isNotEmpty()
+        return buildString {
+            appendLine("VAD $ver | Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT}) | ${Build.MANUFACTURER} ${Build.MODEL}")
+            appendLine("ABI: ${Build.SUPPORTED_ABIS.joinToString()} | lang: ${Strings.code} | theme: $theme")
+            appendLine("engineReady: $engineReady | proxy: ${if (proxyOn) "on" else "off"} | cookies: ${cookiesFile().isFile} | folder: ${targetLabel()}")
+            appendLine("--------")
+        }
+    }
+
+    private fun fullLogText(): String = logHeader() + synchronized(logLock) { logBuf.toString() }
+
+    private fun copyLog() {
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        cm.setPrimaryClip(ClipData.newPlainText("VAD log", fullLogText()))
+        toast(t("t_copied"))
+    }
+
+    private fun shareLog() {
+        val text = fullLogText().takeLast(200_000)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "VAD log")
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        startActivity(Intent.createChooser(send, t("log_share")))
+    }
+
+    private fun saveLog() {
+        try {
+            val name = "vad-log-" + SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + ".txt"
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, name)
+                put(MediaStore.Downloads.MIME_TYPE, "text/plain")
+                put(MediaStore.Downloads.RELATIVE_PATH, "Download/VAD")
+            }
+            val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("insert failed")
+            contentResolver.openOutputStream(uri)?.use { it.write(fullLogText().toByteArray(Charsets.UTF_8)) }
+            toast(t("t_log_saved"))
+        } catch (e: Exception) {
+            toast(e.message ?: "error")
+        }
+    }
+
+    private fun clearLog() {
+        synchronized(logLock) { logBuf.setLength(0) }
+        try {
+            logFile().delete()
+        } catch (_: Exception) {
+        }
+        logText.text = ""
+        toast(t("t_cleared"))
     }
 
     private fun setBusy(b: Boolean) = runOnUiThread {
