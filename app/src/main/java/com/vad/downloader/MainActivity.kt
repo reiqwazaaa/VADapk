@@ -4,6 +4,7 @@ import android.Manifest
 import android.animation.ObjectAnimator
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.Dialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
@@ -83,7 +84,9 @@ class MainActivity : Activity() {
     private val kawaii: Boolean get() = theme > 0
     private val night: Boolean get() = theme == 2
     private var catTaps = 0
+    // 0 - главная, 1 - лог, 2 - настройки
     private var tab = 0
+    private var applyTabFn: (() -> Unit)? = null
     private val logLock = Any()
     private val logBuf = StringBuilder()
     private val tsFmt = SimpleDateFormat("HH:mm:ss", Locale.US)
@@ -327,28 +330,6 @@ class MainActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        langRow.addView(TextView(this).apply {
-            text = t("lang_label") + ": "
-            setPadding(0, 0, dp(8), 0)
-            tintText(this)
-        })
-        val langList = Strings.available(prefs.getBoolean("kawaii_unlocked", false))
-        val langSpinner = Spinner(this).apply {
-            adapter = styledAdapter(langList.map { it.name })
-            setSelection(langList.indexOfFirst { it.code == Strings.code }.coerceAtLeast(0))
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
-                    val code = langList[pos].code
-                    if (code != Strings.code) {
-                        Strings.set(this@MainActivity, code)
-                        Handler(Looper.getMainLooper()).post { buildUi() }
-                    }
-                }
-
-                override fun onNothingSelected(p: AdapterView<*>?) {}
-            }
-        }
-        langRow.addView(langSpinner)
         val catButton = ImageView(this).apply {
             setImageResource(R.drawable.ic_cat)
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -361,6 +342,18 @@ class MainActivity : Activity() {
             if (kawaii) attachPressEffect(this)
         }
         langRow.addView(catButton)
+        val settingsButton = TextView(this).apply {
+            text = "\u2699"
+            textSize = 22f
+            gravity = Gravity.CENTER
+            setTextColor(if (kawaii) kawaiiText else 0xFFFFFFFF.toInt())
+            background = circleBackground()
+            contentDescription = t("settings")
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(10) }
+            setOnClickListener { tab = 2; applyTabFn?.invoke() }
+            if (kawaii) attachPressEffect(this)
+        }
+        langRow.addView(settingsButton)
         headerLeft.addView(langRow)
         header.addView(headerLeft, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
@@ -432,18 +425,6 @@ class MainActivity : Activity() {
         }
         main.addView(TextView(this).apply { text = t("quality_label"); tintText(this) })
         main.addView(qualitySpinner)
-
-        // --- папка загрузки ---
-        pathText = TextView(this).apply { tintText(this) }
-        main.addView(pathText)
-        val pathRow = FitRow(this)
-        pathRow.addView(button(t("pick_folder")) { pickFolder() })
-        pathRow.addView(button(t("default_folder")) {
-            prefs.edit().remove("tree_uri").apply()
-            refreshPath()
-        })
-        main.addView(pathRow)
-        refreshPath()
 
         // --- кнопки действий ---
         val bAuto = button(t("dl_auto")) { startAuto() }
@@ -518,32 +499,81 @@ class MainActivity : Activity() {
         logButtons.addView(button(t("log_save")) { saveLog() })
         logButtons.addView(button(t("log_clear")) { clearLog() })
         val logPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        logPane.addView(button(t("back")) { tab = 2; applyTabFn?.invoke() })
         logPane.addView(logButtons)
         logPane.addView(logScroll)
 
+        // --- настройки ---
+        val settings = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        settings.addView(TextView(this).apply {
+            text = t("settings")
+            textSize = 20f
+            setTypeface(typeface, Typeface.BOLD)
+            tintText(this)
+        })
+        val langRow2 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        langRow2.addView(TextView(this).apply {
+            text = t("lang_label") + ": "
+            setPadding(0, 0, dp(8), 0)
+            tintText(this)
+        })
+        val langList = Strings.available(prefs.getBoolean("kawaii_unlocked", false))
+        langRow2.addView(Spinner(this).apply {
+            adapter = styledAdapter(langList.map { it.name })
+            setSelection(langList.indexOfFirst { it.code == Strings.code }.coerceAtLeast(0))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    val code = langList[pos].code
+                    if (code != Strings.code) {
+                        Strings.set(this@MainActivity, code)
+                        Handler(Looper.getMainLooper()).post { buildUi() }
+                    }
+                }
+
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+        })
+        settings.addView(langRow2)
+        pathText = TextView(this).apply { tintText(this) }
+        settings.addView(pathText)
+        val pathRow = FitRow(this)
+        pathRow.addView(button(t("pick_folder")) { pickFolder() })
+        pathRow.addView(button(t("default_folder")) {
+            prefs.edit().remove("tree_uri").apply()
+            refreshPath()
+        })
+        settings.addView(pathRow)
+        refreshPath()
+
+        settings.addView(CheckBox(this).apply {
+            text = t("set_game")
+            isChecked = prefs.getBoolean("game_gate", false)
+            tintText(this)
+            if (kawaii) buttonTintList = ColorStateList.valueOf(accent)
+            setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean("game_gate", on).apply() }
+        })
+        settings.addView(button(t("open_log")) { tab = 1; applyTabFn?.invoke() })
+        settings.addView(button(t("back")) { tab = 0; applyTabFn?.invoke() })
+
         val mainScroll = ScrollView(this).apply { addView(main) }
+        val settingsScroll = ScrollView(this).apply { addView(settings) }
         val content = FrameLayout(this)
         val matchBoth = ViewGroup.LayoutParams.MATCH_PARENT
         content.addView(mainScroll, FrameLayout.LayoutParams(matchBoth, matchBoth))
+        content.addView(settingsScroll, FrameLayout.LayoutParams(matchBoth, matchBoth))
         content.addView(logPane, FrameLayout.LayoutParams(matchBoth, matchBoth))
 
-        val bTabMain = button(t("tab_main")) {}
-        val bTabLog = button(t("tab_log")) {}
-        fun applyTab() {
+        applyTabFn = {
             mainScroll.visibility = if (tab == 0) View.VISIBLE else View.GONE
+            settingsScroll.visibility = if (tab == 2) View.VISIBLE else View.GONE
             logPane.visibility = if (tab == 1) View.VISIBLE else View.GONE
-            bTabMain.alpha = if (tab == 0) 1f else 0.5f
-            bTabLog.alpha = if (tab == 1) 1f else 0.5f
             if (tab == 1) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
         }
-        bTabMain.setOnClickListener { tab = 0; applyTab() }
-        bTabLog.setOnClickListener { tab = 1; applyTab() }
-        val tabRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        tabRow.addView(bTabMain, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        tabRow.addView(bTabLog, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        root.addView(tabRow)
         root.addView(content, LinearLayout.LayoutParams(matchBoth, 0, 1f))
-        applyTab()
+        applyTabFn?.invoke()
 
         val frame = FrameLayout(this)
         frame.addView(root, FrameLayout.LayoutParams(
@@ -553,6 +583,15 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
         setContentView(frame)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        when (tab) {
+            1 -> { tab = 2; applyTabFn?.invoke() }
+            2 -> { tab = 0; applyTabFn?.invoke() }
+            else -> @Suppress("DEPRECATION") super.onBackPressed()
+        }
     }
 
     private fun handleShareIntent(i: Intent?) {
@@ -1008,6 +1047,63 @@ class MainActivity : Activity() {
 
     private fun runDownload(urls: List<String>, playlist: Boolean, configure: (YoutubeDLRequest) -> Unit) {
         if (!engineReady || busy) return
+        if (prefs.getBoolean("game_gate", false)) {
+            playGate { runDownloadNow(urls, playlist, configure) }
+        } else {
+            runDownloadNow(urls, playlist, configure)
+        }
+    }
+
+    /** Случайная мини-игра: победа запускает загрузку. */
+    private fun playGate(onWin: () -> Unit) {
+        val dlg = Dialog(this, android.R.style.Theme_Material_Light_NoActionBar_Fullscreen)
+        dlg.setCancelable(false)
+        val kind = listOf("snake", "maze", "tank", "run").random()
+        val onFinish: (Boolean) -> Unit = { win ->
+            dlg.dismiss()
+            if (win) {
+                toast(t("game_win"))
+                onWin()
+            } else {
+                AlertDialog.Builder(this)
+                    .setMessage(t("game_lose"))
+                    .setCancelable(false)
+                    .setPositiveButton(t("retry")) { _, _ -> playGate(onWin) }
+                    .setNegativeButton(t("cancel"), null)
+                    .show()
+            }
+        }
+        val game: GameView = when (kind) {
+            "snake" -> SnakeGame(this, onFinish)
+            "maze" -> MazeGame(this, onFinish)
+            "tank" -> TankGame(this, onFinish)
+            else -> RunnerGame(this, onFinish)
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setBackgroundColor(0xFFFFE6F3.toInt())
+            setPadding(dp(12), dp(24), dp(12), dp(12))
+        }
+        box.addView(TextView(this).apply {
+            text = t("game_head")
+            textSize = 18f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(0xFF4B2E83.toInt())
+        })
+        box.addView(TextView(this).apply {
+            text = t("g_$kind")
+            setTextColor(0xFF6A4A9A.toInt())
+            setPadding(0, dp(4), 0, dp(8))
+        })
+        box.addView(game, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        box.addView(button(t("cancel")) { dlg.dismiss() })
+        dlg.setContentView(box)
+        dlg.show()
+    }
+
+    private fun runDownloadNow(urls: List<String>, playlist: Boolean, configure: (YoutubeDLRequest) -> Unit) {
+        if (!engineReady || busy) return
         setBusy(true)
         setStatus(t("st_downloading"))
         DownloadService.start(this)
@@ -1017,6 +1113,7 @@ class MainActivity : Activity() {
             var failed = 0
             var stopped = false
             var lastError = ""
+            var friendly = ""
             try {
                 for ((idx, url) in urls.withIndex()) {
                     tmp.deleteRecursively()
@@ -1065,7 +1162,17 @@ class MainActivity : Activity() {
                         failed++
                         lastError = m
                         log(f("log_error", m))
-                        if (m.contains("sign in", true) || m.contains("Precondition", true)) {
+                        val members = m.contains("members-only", true) || m.contains("members only", true) ||
+                            m.contains("channel's members", true) || m.contains("Join this channel", true)
+                        val priv = m.contains("private video", true) || m.contains("confirm your age", true) ||
+                            m.contains("age-restricted", true)
+                        if (members) {
+                            friendly = t("err_members")
+                            log(friendly)
+                        } else if (priv) {
+                            friendly = t("err_private")
+                            log(friendly)
+                        } else if (m.contains("sign in", true) || m.contains("Precondition", true)) {
                             log(t("log_hint_signin"))
                         }
                     }
@@ -1094,10 +1201,11 @@ class MainActivity : Activity() {
                 }
                 else -> {
                     doneTitle = t("n_error")
-                    doneText = lastError.lineSequence().firstOrNull { it.isNotBlank() }?.take(160)
+                    doneText = if (friendly.isNotEmpty()) friendly
+                    else lastError.lineSequence().firstOrNull { it.isNotBlank() }?.take(160)
                         ?: t("st_no_files")
                     mood = "sad"
-                    setStatus(t("st_error"))
+                    setStatus(if (friendly.isNotEmpty()) friendly else t("st_error"))
                 }
             }
             DownloadService.stop(this)
