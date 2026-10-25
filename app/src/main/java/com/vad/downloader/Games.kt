@@ -656,217 +656,442 @@ class TankGame(ctx: Context, onFinish: (Boolean) -> Unit) : GameView(ctx, onFini
     }
 }
 
-// ============================================================ 4. Бегалка
+// ============================================================ 4. Платформер
 
-class RunnerGame(ctx: Context, onFinish: (Boolean) -> Unit) : GameView(ctx, onFinish) {
-    private class Gap(val x0: Float, val x1: Float)
-    private class Spike(val x: Float)
+/**
+ * Простой платформер с разгоном: холмы (с горки быстрее, в горку медленнее), ямы,
+ * плавающие платформы, пружинки, желейные слаймы (на них можно прыгнуть) и флажок в конце.
+ * Управление: левая/правая площадка и кнопка прыжка. Персонаж и уровень - свои.
+ */
+class PlatformerGame(ctx: Context, onFinish: (Boolean) -> Unit) : GameView(ctx, onFinish) {
+    private class Blob(val x0: Float, val x1: Float, var x: Float, var dir: Float) {
+        var alive = true
+    }
+    private class Plat(val x0: Float, val x1: Float, val y: Float)
+    private class Spring(val x: Float)
     private class Pickup(val x: Float, val y: Float) {
         var taken = false
     }
 
-    private val finishX = 200f
+    private val finishX = 170f
+    private val res = 4          // отсчётов высоты на тайл
+    private val pit = -1000f
+    private val hs = FloatArray((finishX * res).toInt() + 80 * res / 4 + 80) { 0f }
+    private val blobs = ArrayList<Blob>()
+    private val plats = ArrayList<Plat>()
+    private val springs = ArrayList<Spring>()
+    private val pickups = ArrayList<Pickup>()
+
     private var u = 1f
-    private var groundY = 0f
     private var w = 0f
     private var h = 0f
-    private var worldX = 0f
+    private var baseY = 0f
+    private var px = 3f
     private var py = 0f
+    private var vx = 0f
     private var vy = 0f
     private var onGround = true
-    private var falling = false
-    private var speed = 6f
     private var lives = 3
     private var invul = 0f
     private var hearts = 0
     private var time = 0f
-    private val gaps = ArrayList<Gap>()
-    private val spikes = ArrayList<Spike>()
-    private val pickups = ArrayList<Pickup>()
+    private var safeX = 3f
+    private var spin = 0f
+    private var left = false
+    private var right = false
+    private var jumpHeld = false
+    private var jumpBuffer = 0f
+    private var coyote = 0f
     private var sky: Shader? = null
 
+    private var btnR = 1f
+    private var leftX = 0f
+    private var rightX = 0f
+    private var jumpX = 0f
+    private var btnY = 0f
+
     init {
-        var x = 16f
-        while (x < finishX - 12f) {
+        // --- генерация уровня ---
+        var x = 14f
+        while (x < finishX - 14f) {
             val r = rnd.nextFloat()
             when {
-                r < 0.45f -> {
-                    spikes.add(Spike(x))
-                    pickups.add(Pickup(x - 1.1f, 1.2f)); pickups.add(Pickup(x, 2.0f)); pickups.add(Pickup(x + 1.1f, 1.2f))
+                r < 0.34f -> {                       // холм
+                    val len = 9f + rnd.nextFloat() * 5f
+                    val hmax = 1.2f + rnd.nextFloat() * 1.0f
+                    addHill(x, len, hmax)
+                    for (i in 0..3) pickups.add(Pickup(x + len * (0.2f + 0.2f * i), hmax * (0.5f - 0.5f * Math.cos(2.0 * Math.PI * (0.2f + 0.2f * i)).toFloat()) + 0.8f))
+                    x += len + 5f
                 }
-                r < 0.70f -> {
-                    spikes.add(Spike(x)); spikes.add(Spike(x + 1.0f))
-                    pickups.add(Pickup(x - 0.6f, 1.5f)); pickups.add(Pickup(x + 0.5f, 2.2f)); pickups.add(Pickup(x + 1.6f, 1.5f))
+                r < 0.52f -> {                       // яма
+                    val len = 2.2f + rnd.nextFloat() * 1.5f
+                    setPit(x, x + len)
+                    pickups.add(Pickup(x + len * 0.2f, 1.6f)); pickups.add(Pickup(x + len * 0.5f, 2.3f)); pickups.add(Pickup(x + len * 0.8f, 1.6f))
+                    x += len + 6f
                 }
-                r < 0.90f -> {
-                    gaps.add(Gap(x, x + 2.4f))
-                    pickups.add(Pickup(x + 0.4f, 1.4f)); pickups.add(Pickup(x + 1.2f, 2.0f)); pickups.add(Pickup(x + 2.0f, 1.4f))
+                r < 0.70f -> {                       // слаймы
+                    val b = Blob(x, x + 7f, x + 3f, 1f)
+                    blobs.add(b)
+                    for (i in 0..2) pickups.add(Pickup(x + 1f + i * 2.2f, 0.8f))
+                    x += 11f
                 }
-                else -> {
-                    for (i in 0..3) pickups.add(Pickup(x + i * 0.9f, 0.6f))
+                r < 0.85f -> {                       // платформы с сердечками
+                    val y = 2.6f + rnd.nextFloat() * 0.8f
+                    plats.add(Plat(x + 2f, x + 6f, y))
+                    for (i in 0..3) pickups.add(Pickup(x + 2.5f + i, y + 0.8f))
+                    springs.add(Spring(x))
+                    x += 10f
+                }
+                else -> {                            // россыпь сердечек
+                    for (i in 0..5) pickups.add(Pickup(x + i * 0.9f, 0.7f))
+                    x += 9f
                 }
             }
-            x += 8f + rnd.nextFloat() * 4f
         }
+    }
+
+    private fun addHill(x0: Float, len: Float, hmax: Float) {
+        val a = (x0 * res).toInt()
+        val b = ((x0 + len) * res).toInt()
+        for (i in a..b) {
+            if (i !in hs.indices) continue
+            val t = (i - a).toFloat() / (b - a)
+            hs[i] = max(hs[i], hmax * (0.5f - 0.5f * Math.cos(2.0 * Math.PI * t).toFloat()))
+        }
+    }
+
+    private fun setPit(x0: Float, x1: Float) {
+        for (i in (x0 * res).toInt()..(x1 * res).toInt()) if (i in hs.indices) hs[i] = pit
+    }
+
+    private fun ground(x: Float): Float {
+        if (x < 0f) return 0f
+        val f = x * res
+        val i = f.toInt()
+        if (i + 1 >= hs.size) return 0f
+        val a = hs[i]
+        val b = hs[i + 1]
+        if (a == pit || b == pit) return pit
+        return a + (b - a) * (f - i)
     }
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         this.w = w.toFloat()
         this.h = h.toFloat()
         u = h / 10f
-        groundY = h * 0.72f
-        sky = LinearGradient(0f, 0f, 0f, groundY, 0xFFBDE7FF.toInt(), 0xFFFFD6EC.toInt(), Shader.TileMode.CLAMP)
+        baseY = h * 0.70f
+        btnR = u * 0.85f
+        btnY = h - btnR * 1.15f
+        leftX = btnR * 1.1f
+        rightX = leftX + btnR * 2.3f
+        jumpX = w - btnR * 1.3f
+        sky = LinearGradient(0f, 0f, 0f, baseY, 0xFFBDE7FF.toInt(), 0xFFFFD6EC.toInt(), Shader.TileMode.CLAMP)
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> if (onGround && !falling) {
-                vy = 14f
-                onGround = false
+        var l = false
+        var r = false
+        var j = false
+        val up = if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_POINTER_UP) e.actionIndex else -1
+        if (e.actionMasked != MotionEvent.ACTION_CANCEL) {
+            for (i in 0 until e.pointerCount) {
+                if (i == up) continue
+                val x = e.getX(i)
+                val y = e.getY(i)
+                if (hypot(x - jumpX, y - btnY) < btnR * 1.5f) j = true
+                else if (hypot(x - leftX, y - btnY) < btnR * 1.2f) l = true
+                else if (hypot(x - rightX, y - btnY) < btnR * 1.2f) r = true
+                else if (y > h * 0.5f) { if (x < w * 0.5f) { if (x < (leftX + rightX) / 2f) l = true else r = true } }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (vy > 6f) vy *= 0.5f
         }
+        if (j && !jumpHeld) jumpBuffer = 0.14f
+        if (!j && jumpHeld && vy > 5f) vy *= 0.5f
+        jumpHeld = j
+        left = l
+        right = r
         return true
     }
 
-    private fun gapAt(x: Float): Gap? = gaps.firstOrNull { x > it.x0 + 0.15f && x < it.x1 - 0.15f }
+    private fun hurt() {
+        if (invul > 0f) return
+        lives--
+        invul = 1.6f
+        vy = 9f
+        vx = -4f
+        onGround = false
+        if (lives <= 0) finish(false)
+    }
 
     override fun update(dt: Float) {
         time += dt
         invul = max(0f, invul - dt)
-        speed = min(9.5f, 6f + worldX / 60f)
-        worldX += speed * dt
+        jumpBuffer = max(0f, jumpBuffer - dt)
+        coyote = max(0f, coyote - dt)
+        val dir = (if (right) 1f else 0f) - (if (left) 1f else 0f)
+        val maxV = 10.5f
+        if (dir != 0f) {
+            val acc = if (onGround) 16f else 10f
+            if (vx * dir < maxV) vx += dir * acc * dt
+        } else if (onGround) {
+            val fr = 9f * dt
+            vx = if (abs(vx) <= fr) 0f else vx - Math.signum(vx) * fr
+        }
+        if (onGround) {
+            val g0 = ground(px - 0.12f)
+            val g1 = ground(px + 0.12f)
+            if (g0 != pit && g1 != pit) vx -= ((g1 - g0) / 0.24f) * 16f * dt   // горка разгоняет, подъём тормозит
+        }
+        vx = vx.coerceIn(-13f, 14f)
+        val oldPy = py
+        px = max(0.5f, px + vx * dt)
+        if (!onGround) vy -= 38f * dt
         py += vy * dt
-        vy -= 38f * dt
-        if (!falling && py <= 0f) {
-            if (gapAt(worldX) != null) {
-                falling = true
-                onGround = false
-            } else {
-                py = 0f
-                vy = 0f
-                onGround = true
+
+        // платформы и земля
+        var landed = false
+        val gh = ground(px)
+        if (vy <= 0f) {
+            for (p in plats) {
+                if (px > p.x0 && px < p.x1 && oldPy >= p.y - 0.1f && py <= p.y) {
+                    py = p.y; vy = 0f; landed = true
+                }
+            }
+            if (!landed && gh != pit && py <= gh + 0.001f && oldPy >= gh - 0.6f) {
+                py = gh; vy = 0f; landed = true
+            } else if (!landed && gh != pit && onGround && py <= gh + 0.35f) {
+                py = gh; vy = 0f; landed = true     // идём по склону вниз
             }
         }
-        if (falling && py < -5f) {
-            val g = gapAt(worldX)
+        if (landed) {
+            onGround = true
+            coyote = 0.1f
+            if (gh != pit && ground(px - 2.5f) != pit && ground(px + 2.5f) != pit && py == gh) safeX = px
+        } else {
+            if (onGround) coyote = 0.1f
+            onGround = false
+        }
+        // прыжок
+        if (jumpBuffer > 0f && (onGround || coyote > 0f)) {
+            vy = 14f
+            onGround = false
+            coyote = 0f
+            jumpBuffer = 0f
+        }
+        // пружинки
+        for (s in springs) {
+            if (abs(s.x - px) < 0.5f && py < 0.5f + ground(s.x).coerceAtLeast(0f) && vy <= 0f) {
+                vy = 22f
+                onGround = false
+            }
+        }
+        spin += dt * (if (onGround) 0f else 16f)
+        // падение в яму
+        if (py < -6f) {
             lives--
             if (lives <= 0) {
                 finish(false)
                 return
             }
-            worldX = (g?.x1 ?: worldX) + 1f
-            py = 0f
+            px = safeX
+            py = ground(px).coerceAtLeast(0f)
+            vx = 0f
             vy = 0f
-            falling = false
+            invul = 1.5f
             onGround = true
-            invul = 1.3f
         }
-        if (invul <= 0f && py < 0.7f && !falling) {
-            if (spikes.any { abs(it.x - worldX) < 0.65f }) {
-                lives--
-                invul = 1.3f
-                if (lives <= 0) {
-                    finish(false)
-                    return
+        // слаймы
+        for (b in blobs) {
+            if (!b.alive) continue
+            b.x += b.dir * 1.6f * dt
+            if (b.x < b.x0) b.dir = 1f
+            if (b.x > b.x1) b.dir = -1f
+            val by = max(0f, ground(b.x))
+            if (abs(b.x - px) < 0.75f && abs(py - by) < 0.9f) {
+                if (!onGround && vy < 0f && py > by + 0.25f) {
+                    b.alive = false
+                    vy = 12f
+                    onGround = false
+                } else {
+                    hurt()
+                    if (finished) return
                 }
             }
         }
         for (p in pickups) {
-            if (!p.taken && abs(p.x - worldX) < 0.7f && abs(p.y - py) < 0.9f) {
+            if (!p.taken && abs(p.x - px) < 0.75f && abs(p.y - py) < 1.0f) {
                 p.taken = true
                 hearts++
             }
         }
-        if (worldX >= finishX) finish(true)
+        if (px >= finishX) finish(true)
     }
 
-    private fun sxOf(wx: Float) = (wx - worldX) * u + w * 0.25f
+    private fun sx(wx: Float) = (wx - px) * u + w * 0.33f
+    private fun sy(hgt: Float) = baseY - (hgt - max(0f, py * 0.35f)) * u
 
     override fun render(c: Canvas) {
         paint.style = Paint.Style.FILL
         paint.shader = sky
-        c.drawRect(0f, 0f, w, groundY, paint)
+        c.drawRect(0f, 0f, w, h, paint)
         paint.shader = null
-        // дальние и ближние холмы (параллакс)
+        // холмы на заднем плане
         for (layer in 0..1) {
-            paint.color = if (layer == 0) 0xFFE3D3FF.toInt() else 0xFFFFC2E0.toInt()
-            val factor = if (layer == 0) 0.15f else 0.35f
-            val amp = if (layer == 0) 2.2f * u else 1.4f * u
-            val base = groundY - (if (layer == 0) 1.0f else 0.2f) * u
+            paint.color = if (layer == 0) 0xFFE3D3FF.toInt() else 0xFFFFC9E3.toInt()
+            val factor = if (layer == 0) 0.2f else 0.4f
+            val amp = if (layer == 0) 2.4f * u else 1.5f * u
+            val base = baseY - (if (layer == 0) 0.6f else 0f) * u
             val path = Path()
-            path.moveTo(0f, groundY)
+            path.moveTo(0f, h)
             var x = 0f
             while (x <= w + 12f) {
-                val y = base - amp * (0.5f + 0.5f * sin((x + worldX * u * factor) / (u * (if (layer == 0) 4.5f else 3f))))
-                path.lineTo(x, y)
+                path.lineTo(x, base - amp * (0.5f + 0.5f * sin((x + px * u * factor) / (u * (if (layer == 0) 5f else 3.2f)))))
                 x += 12f
             }
-            path.lineTo(w, groundY)
+            path.lineTo(w, h)
             path.close()
             c.drawPath(path, paint)
         }
-        // земля
+        // земля (полигон по высотам)
+        val ground = Path()
+        val grass = Path()
+        var started = false
+        var x = 0f
+        var segStart = -1f
+        val x0w = px - w * 0.33f / u - 1f
+        val x1w = px + w * 0.67f / u + 1f
+        var wx = floor(x0w * 2f) / 2f
+        val step = 0.5f
         paint.color = 0xFFFF9ACB.toInt()
-        c.drawRect(0f, groundY, w, h, paint)
+        var prevValid = false
+        var startWx = 0f
+        var lastWx = 0f
+        while (wx <= x1w) {
+            val g = ground(wx)
+            if (g == pit) {
+                if (prevValid) {
+                    ground.lineTo(sx(lastWx), h); ground.close()
+                    c.drawPath(ground, paint)
+                    ground.reset()
+                }
+                prevValid = false
+            } else {
+                if (!prevValid) {
+                    ground.moveTo(sx(wx), h)
+                }
+                ground.lineTo(sx(wx), sy(g))
+                prevValid = true
+                lastWx = wx
+            }
+            wx += step
+        }
+        if (prevValid) {
+            ground.lineTo(sx(lastWx), h); ground.close()
+            c.drawPath(ground, paint)
+        }
+        // травка сверху
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 0.28f * u
         paint.color = 0xFFFFC2E5.toInt()
-        c.drawRect(0f, groundY, w, groundY + 0.35f * u, paint)
-        paint.color = 0xFFF283B8.toInt()
-        var sx = -((worldX * u) % (2f * u))
-        while (sx < w) {
-            c.drawRect(sx, groundY + 0.8f * u, sx + u, h, paint)
-            sx += 2f * u
+        wx = floor(x0w * 2f) / 2f
+        var pg = pit
+        var pwx = wx
+        while (wx <= x1w) {
+            val g = ground(wx)
+            if (g != pit && pg != pit) c.drawLine(sx(pwx), sy(pg), sx(wx), sy(g), paint)
+            pg = g
+            pwx = wx
+            wx += step
         }
-        // ямы
-        paint.color = 0xFF3A2466.toInt()
-        for (g in gaps) {
-            val a = sxOf(g.x0)
-            val b = sxOf(g.x1)
-            if (b > 0 && a < w) c.drawRect(a, groundY, b, h, paint)
+        paint.style = Paint.Style.FILL
+        // платформы
+        for (p in plats) {
+            val a = sx(p.x0)
+            val b = sx(p.x1)
+            if (b < 0 || a > w) continue
+            paint.color = 0xFFB79BF0.toInt()
+            c.drawRoundRect(RectF(a, sy(p.y), b, sy(p.y) + 0.35f * u), 12f, 12f, paint)
+            paint.color = 0xFFD7C6FF.toInt()
+            c.drawRect(a + 6f, sy(p.y), b - 6f, sy(p.y) + 0.12f * u, paint)
         }
-        // шипы
-        paint.color = 0xFF8D6BD6.toInt()
-        for (s in spikes) {
-            val x = sxOf(s.x)
-            if (x < -u || x > w + u) continue
-            val p = Path()
-            p.moveTo(x - 0.45f * u, groundY)
-            p.lineTo(x, groundY - 0.85f * u)
-            p.lineTo(x + 0.45f * u, groundY)
-            p.close()
-            c.drawPath(p, paint)
+        // пружинки
+        for (s in springs) {
+            val xx = sx(s.x)
+            if (xx < -u || xx > w + u) continue
+            val gy = sy(max(0f, ground(s.x)))
+            paint.color = 0xFFFFD84D.toInt()
+            c.drawRoundRect(RectF(xx - 0.45f * u, gy - 0.5f * u, xx + 0.45f * u, gy), 10f, 10f, paint)
+            paint.color = 0xFFFF6FA5.toInt()
+            c.drawRect(xx - 0.45f * u, gy - 0.5f * u, xx + 0.45f * u, gy - 0.35f * u, paint)
         }
         // сердечки
         paint.color = 0xFFFF4F7B.toInt()
         for (p in pickups) {
             if (p.taken) continue
-            val x = sxOf(p.x)
-            if (x < -u || x > w + u) continue
-            drawShape(c, heartPath, x, groundY - p.y * u - 0.3f * u, 0.28f * u, paint)
+            val xx = sx(p.x)
+            if (xx < -u || xx > w + u) continue
+            drawShape(c, heartPath, xx, sy(p.y), 0.28f * u, paint)
+        }
+        // слаймы
+        for (b in blobs) {
+            if (!b.alive) continue
+            val xx = sx(b.x)
+            if (xx < -u || xx > w + u) continue
+            val gy = sy(max(0f, ground(b.x)))
+            val squish = 0.06f * sin(time * 8f)
+            paint.color = 0xFF5CC8FF.toInt()
+            c.drawRoundRect(RectF(xx - 0.5f * u, gy - (0.8f + squish) * u, xx + 0.5f * u, gy), 0.35f * u, 0.35f * u, paint)
+            paint.color = 0xFFFFFFFF.toInt()
+            c.drawCircle(xx - 0.18f * u, gy - 0.5f * u, 0.12f * u, paint)
+            c.drawCircle(xx + 0.18f * u, gy - 0.5f * u, 0.12f * u, paint)
+            paint.color = 0xFF2B2B5E.toInt()
+            c.drawCircle(xx - 0.18f * u + 0.03f * u * b.dir, gy - 0.5f * u, 0.06f * u, paint)
+            c.drawCircle(xx + 0.18f * u + 0.03f * u * b.dir, gy - 0.5f * u, 0.06f * u, paint)
         }
         // финиш
-        val fx = sxOf(finishX)
+        val fx = sx(finishX)
         if (fx < w + u) {
+            val gy = sy(0f)
             paint.color = 0xFFFFFFFF.toInt()
-            c.drawRect(fx, groundY - 3.5f * u, fx + 0.12f * u, groundY, paint)
+            c.drawRect(fx, gy - 3.5f * u, fx + 0.12f * u, gy, paint)
             paint.color = 0xFFFF4F98.toInt()
             val flag = Path()
-            flag.moveTo(fx + 0.12f * u, groundY - 3.5f * u)
-            flag.lineTo(fx + 1.8f * u, groundY - 3.0f * u)
-            flag.lineTo(fx + 0.12f * u, groundY - 2.5f * u)
+            flag.moveTo(fx + 0.12f * u, gy - 3.5f * u)
+            flag.lineTo(fx + 1.8f * u, gy - 3.0f * u)
+            flag.lineTo(fx + 0.12f * u, gy - 2.5f * u)
             flag.close()
             c.drawPath(flag, paint)
         }
-        // игрок
+        // игрок: на земле бежит, в воздухе крутится клубочком
         if (invul <= 0f || ((time * 14f).toInt() % 2 == 0)) {
-            val bob = if (onGround && !falling) abs(sin(time * 14f)) * 0.08f * u else 0f
-            drawCatFace(c, w * 0.25f, groundY - py * u - 0.55f * u - bob, 0.42f * u, paint)
+            val cx = sx(px)
+            val r = 0.42f * u
+            val cy = sy(py) - r * 1.05f
+            c.save()
+            if (!onGround) c.rotate(spin * 57.3f * (if (vx >= 0f) 1f else -1f), cx, cy)
+            else if (abs(vx) > 6f) c.skew(-0.12f * Math.signum(vx), 0f)
+            drawCatFace(c, cx, cy, r, paint)
+            c.restore()
         }
         // HUD
-        hud(c, "♥".repeat(max(0, lives)) + "   ★ $hearts", 12f, 26f * density)
+        hud(c, "\u2665".repeat(max(0, lives)) + "   \u2605 $hearts", 12f, 26f * density)
         paint.color = 0x55FFFFFF
-        c.drawRoundRect(RectF(w * 0.35f, 14f * density, w - 12f, 22f * density), 8f, 8f, paint)
+        c.drawRoundRect(RectF(w * 0.4f, 14f * density, w - 12f, 22f * density), 8f, 8f, paint)
         paint.color = 0xFFFF4F98.toInt()
-        c.drawRoundRect(RectF(w * 0.35f, 14f * density, w * 0.35f + (w * 0.65f - 12f) * (worldX / finishX).coerceIn(0f, 1f), 22f * density), 8f, 8f, paint)
+        c.drawRoundRect(RectF(w * 0.4f, 14f * density, w * 0.4f + (w * 0.6f - 12f) * (px / finishX).coerceIn(0f, 1f), 22f * density), 8f, 8f, paint)
+        // кнопки управления
+        paint.color = if (left) 0xAAFF8FC7.toInt() else 0x66FFFFFF
+        c.drawCircle(leftX, btnY, btnR, paint)
+        paint.color = if (right) 0xAAFF8FC7.toInt() else 0x66FFFFFF
+        c.drawCircle(rightX, btnY, btnR, paint)
+        paint.color = 0xFF4B2E83.toInt()
+        val ar = btnR * 0.4f
+        val la = Path().apply { moveTo(leftX + ar * 0.6f, btnY - ar); lineTo(leftX - ar * 0.8f, btnY); lineTo(leftX + ar * 0.6f, btnY + ar); close() }
+        val ra = Path().apply { moveTo(rightX - ar * 0.6f, btnY - ar); lineTo(rightX + ar * 0.8f, btnY); lineTo(rightX - ar * 0.6f, btnY + ar); close() }
+        c.drawPath(la, paint)
+        c.drawPath(ra, paint)
+        paint.color = if (jumpHeld) 0xFFFF4F98.toInt() else 0xCCFF8FC7.toInt()
+        c.drawCircle(jumpX, btnY, btnR * 1.1f, paint)
+        paint.color = 0xFFFFFFFF.toInt()
+        drawShape(c, starPath, jumpX, btnY, btnR * 0.55f, paint)
     }
 }

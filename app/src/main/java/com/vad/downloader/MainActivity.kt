@@ -12,6 +12,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -51,7 +53,10 @@ import android.widget.Toast
 import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
+import org.json.JSONArray
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -93,17 +98,37 @@ class MainActivity : Activity() {
     private var girlView: ImageView? = null
     private val moodHandler = Handler(Looper.getMainLooper())
     private val reqPickCookies = 43
+    private lateinit var audioSpinner: Spinner
+    private lateinit var historyList: LinearLayout
+    private val audioLabels = listOf("MP3 (best)", "MP3 320k", "MP3 192k", "MP3 128k", "M4A (AAC)", "Opus", "FLAC", "WAV")
+    private val audioCodes = listOf("mp3:0", "mp3:320K", "mp3:192K", "mp3:128K", "m4a", "opus", "flac", "wav")
+    private class DlSpec(val kind: String, val fmt: String, val afmt: String)
+    private class Saved(val name: String, val uri: Uri, val mime: String)
+
+    private class Palette(val key: String, val need: Int, val bg: IntArray, val btn: IntArray, val accent: Int)
+    private val palettes = listOf(
+        Palette("pal_pink", 0, intArrayOf(0xFFFFC1E3.toInt(), 0xFFE0C3FF.toInt(), 0xFFBDE7FF.toInt()), intArrayOf(0xFFFF9ACB.toInt(), 0xFFFFC2E5.toInt()), 0xFFFF5FA2.toInt()),
+        Palette("pal_mint", 1, intArrayOf(0xFFC9FFE5.toInt(), 0xFFBDEBFF.toInt(), 0xFFE8FFD0.toInt()), intArrayOf(0xFF5EDDB0.toInt(), 0xFFA8F5D6.toInt()), 0xFF22B58A.toInt()),
+        Palette("pal_sunset", 3, intArrayOf(0xFFFFD3A8.toInt(), 0xFFFFB1C1.toInt(), 0xFFE7B6FF.toInt()), intArrayOf(0xFFFF9966.toInt(), 0xFFFFC48A.toInt()), 0xFFFF7043.toInt()),
+        Palette("pal_lavender", 5, intArrayOf(0xFFE4D6FF.toInt(), 0xFFCDBDFF.toInt(), 0xFFF7D6FF.toInt()), intArrayOf(0xFFA987F0.toInt(), 0xFFCDB8FF.toInt()), 0xFF8A5CF0.toInt()),
+        Palette("pal_lemon", 10, intArrayOf(0xFFFFF3A8.toInt(), 0xFFFFD6A5.toInt(), 0xFFFFB5D8.toInt()), intArrayOf(0xFFFFC93C.toInt(), 0xFFFFE59A.toInt()), 0xFFFF9F1C.toInt())
+    )
+    private fun wins() = prefs.getInt("wins", 0)
+    private val palette: Palette get() {
+        val p = palettes[prefs.getInt("palette", 0).coerceIn(0, palettes.size - 1)]
+        return if (wins() >= p.need) p else palettes[0]
+    }
 
     private val kawaiiText: Int get() = if (night) 0xFFEBDDFF.toInt() else 0xFF6A2C6B.toInt()
-    private val accent: Int get() = if (night) 0xFFB388FF.toInt() else 0xFFFF5FA2.toInt()
+    private val accent: Int get() = if (night) 0xFFB388FF.toInt() else palette.accent
     private val logTextColor: Int get() = if (night) 0xFFD9C9F5.toInt() else 0xFF5A3A78.toInt()
     private val panelColor: Int get() = if (night) 0x33FFFFFF else 0x99FFFFFF.toInt()
     private val bgColors: IntArray
         get() = if (night) intArrayOf(0xFF2B1B4E.toInt(), 0xFF45307A.toInt(), 0xFF1E3A5F.toInt())
-        else intArrayOf(0xFFFFC1E3.toInt(), 0xFFE0C3FF.toInt(), 0xFFBDE7FF.toInt())
+        else palette.bg
     private val btnColors: IntArray
         get() = if (night) intArrayOf(0xFF7A4DB8.toInt(), 0xFF9B6FD6.toInt())
-        else intArrayOf(0xFFFF9ACB.toInt(), 0xFFFFC2E5.toInt())
+        else palette.btn
 
     @Volatile private var engineReady = false
     @Volatile private var busy = false
@@ -425,11 +450,24 @@ class MainActivity : Activity() {
         }
         main.addView(TextView(this).apply { text = t("quality_label"); tintText(this) })
         main.addView(qualitySpinner)
+        main.addView(TextView(this).apply { text = t("audio_fmt_label"); tintText(this) })
+        audioSpinner = Spinner(this).apply {
+            adapter = styledAdapter(audioLabels)
+            setSelection(prefs.getInt("audio_pos", 0).coerceIn(0, audioLabels.size - 1))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    prefs.edit().putInt("audio_pos", pos).apply()
+                }
+
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+        }
+        main.addView(audioSpinner)
 
         // --- кнопки действий ---
         val bAuto = button(t("dl_auto")) { startAuto() }
         val bPick = button(t("dl_pick")) { startPickFormat() }
-        val bMp3 = button(t("dl_mp3")) { startMp3() }
+        val bMp3 = button(t("dl_audio")) { startMp3() }
         main.addView(bAuto)
         main.addView(bPick)
         main.addView(bMp3)
@@ -463,6 +501,7 @@ class MainActivity : Activity() {
         toolsRow.addView(bProxy)
         toolsRow.addView(bCookies)
         main.addView(toolsRow)
+        main.addView(button(t("history_btn")) { tab = 3; refreshHistory(); applyTabFn?.invoke() })
 
 
         actionButtons = listOf(bAuto, bPick, bMp3, bUpdate)
@@ -555,21 +594,51 @@ class MainActivity : Activity() {
             if (kawaii) buttonTintList = ColorStateList.valueOf(accent)
             setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean("game_gate", on).apply() }
         })
+        fun check(key: String, pref: String, def: Boolean) = settings.addView(CheckBox(this).apply {
+            text = t(key)
+            isChecked = prefs.getBoolean(pref, def)
+            tintText(this)
+            if (kawaii) buttonTintList = ColorStateList.valueOf(accent)
+            setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(pref, on).apply() }
+        })
+        check("set_preview", "preview", true)
+        check("set_clip", "clip_watch", true)
+        if (prefs.getBoolean("kawaii_unlocked", false)) {
+            settings.addView(button(t("rewards_btn")) { showRewards() })
+        }
         settings.addView(button(t("open_log")) { tab = 1; applyTabFn?.invoke() })
         settings.addView(button(t("back")) { tab = 0; applyTabFn?.invoke() })
 
         val mainScroll = ScrollView(this).apply { addView(main) }
         val settingsScroll = ScrollView(this).apply { addView(settings) }
+        historyList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val historyPane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        historyPane.addView(TextView(this).apply {
+            text = t("history_btn")
+            textSize = 20f
+            setTypeface(typeface, Typeface.BOLD)
+            tintText(this)
+        })
+        historyPane.addView(ScrollView(this).apply {
+            addView(historyList)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        })
+        val histButtons = FitRow(this)
+        histButtons.addView(button(t("back")) { tab = 0; applyTabFn?.invoke() })
+        histButtons.addView(button(t("hist_clear")) { saveHistory(JSONArray()); refreshHistory() })
+        historyPane.addView(histButtons)
         val content = FrameLayout(this)
         val matchBoth = ViewGroup.LayoutParams.MATCH_PARENT
         content.addView(mainScroll, FrameLayout.LayoutParams(matchBoth, matchBoth))
         content.addView(settingsScroll, FrameLayout.LayoutParams(matchBoth, matchBoth))
         content.addView(logPane, FrameLayout.LayoutParams(matchBoth, matchBoth))
+        content.addView(historyPane, FrameLayout.LayoutParams(matchBoth, matchBoth))
 
         applyTabFn = {
             mainScroll.visibility = if (tab == 0) View.VISIBLE else View.GONE
             settingsScroll.visibility = if (tab == 2) View.VISIBLE else View.GONE
             logPane.visibility = if (tab == 1) View.VISIBLE else View.GONE
+            historyPane.visibility = if (tab == 3) View.VISIBLE else View.GONE
             if (tab == 1) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
         }
         root.addView(content, LinearLayout.LayoutParams(matchBoth, 0, 1f))
@@ -589,7 +658,7 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         when (tab) {
             1 -> { tab = 2; applyTabFn?.invoke() }
-            2 -> { tab = 0; applyTabFn?.invoke() }
+            2, 3 -> { tab = 0; applyTabFn?.invoke() }
             else -> @Suppress("DEPRECATION") super.onBackPressed()
         }
     }
@@ -724,6 +793,7 @@ class MainActivity : Activity() {
                 }
                 setStatus(t("st_ready"))
                 setBusy(false)
+                runOnUiThread { offerResume() }
             } catch (e: Throwable) {
                 setStatus(t("st_init_fail"))
                 log(f("log_init_fail", e.message))
@@ -891,20 +961,281 @@ class MainActivity : Activity() {
 
     private fun startAuto() {
         val urls = currentUrls() ?: return
-        runDownload(urls, playlistBox.isChecked) { req ->
-            req.addOption("-f", qualityFormat())
-            req.addOption("--merge-output-format", "mp4")
-        }
+        val spec = DlSpec("video", qualityFormat(), "")
+        previewThen(urls, playlistBox.isChecked) { runDownload(urls, playlistBox.isChecked, spec) }
     }
 
     private fun startMp3() {
         val urls = currentUrls() ?: return
-        runDownload(urls, playlistBox.isChecked) { req ->
+        val spec = DlSpec("audio", "", audioCodes[audioSpinner.selectedItemPosition.coerceIn(0, audioCodes.size - 1)])
+        previewThen(urls, playlistBox.isChecked) { runDownload(urls, playlistBox.isChecked, spec) }
+    }
+
+    private fun applySpec(spec: DlSpec, req: YoutubeDLRequest, embed: Boolean) {
+        if (spec.kind == "video") {
+            req.addOption("-f", spec.fmt)
+            req.addOption("--merge-output-format", "mp4")
+        } else {
+            val codec = spec.afmt.substringBefore(":")
+            val q = spec.afmt.substringAfter(":", "")
             req.addOption("-f", "bestaudio/best")
             req.addOption("-x")
-            req.addOption("--audio-format", "mp3")
-            req.addOption("--audio-quality", "0")
+            req.addOption("--audio-format", codec)
+            if (q.isNotEmpty()) req.addOption("--audio-quality", q)
+            if (embed && codec != "wav") {
+                req.addOption("--embed-thumbnail")
+                req.addOption("--convert-thumbnails", "jpg")
+                req.addOption("--embed-metadata")
+            }
         }
+    }
+
+    // ------------------------------------------------------------ предпросмотр
+
+    private fun previewThen(urls: List<String>, playlist: Boolean, go: () -> Unit) {
+        if (!prefs.getBoolean("preview", true) || urls.size != 1 || playlist || !engineReady || busy) {
+            go()
+            return
+        }
+        setBusy(true)
+        setStatus(t("st_preview"))
+        Thread {
+            var info: JSONObject? = null
+            var bmp: Bitmap? = null
+            try {
+                val req = baseRequest(urls[0], false)
+                req.addOption("-J")
+                req.addOption("--no-warnings")
+                val parsed = JSONObject(YoutubeDL.getInstance().execute(req).out)
+                info = parsed
+                val th = parsed.optString("thumbnail", "")
+                if (th.startsWith("http")) {
+                    bmp = try {
+                        val con = URL(th).openConnection() as HttpURLConnection
+                        con.connectTimeout = 8000
+                        con.readTimeout = 8000
+                        con.inputStream.use { BitmapFactory.decodeStream(it) }
+                    } catch (_: Throwable) {
+                        null
+                    }
+                }
+            } catch (e: Throwable) {
+                log(f("log_error", e.message))
+            }
+            runOnUiThread {
+                setBusy(false)
+                setStatus(t("st_ready"))
+                val i = info
+                if (i == null) go() else showPreview(i, bmp, go)
+            }
+        }.start()
+    }
+
+    private fun fmtDuration(sec: Long): String {
+        val h = sec / 3600
+        val m = (sec % 3600) / 60
+        val s = sec % 60
+        return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, s) else String.format(Locale.US, "%d:%02d", m, s)
+    }
+
+    private fun showPreview(info: JSONObject, bmp: Bitmap?, go: () -> Unit) {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(4))
+        }
+        if (bmp != null) {
+            box.addView(ImageView(this).apply {
+                setImageBitmap(bmp)
+                adjustViewBounds = true
+                maxHeight = dp(200)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+            })
+        }
+        box.addView(TextView(this).apply {
+            text = info.optString("title", "")
+            textSize = 16f
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, dp(8), 0, dp(2))
+        })
+        val by = info.optString("uploader", info.optString("channel", ""))
+        val dur = info.optLong("duration", 0L)
+        val sub = listOf(by, if (dur > 0) fmtDuration(dur) else "").filter { it.isNotEmpty() }.joinToString(" · ")
+        if (sub.isNotEmpty()) box.addView(TextView(this).apply { text = sub })
+        AlertDialog.Builder(this)
+            .setView(box)
+            .setPositiveButton(t("prev_go")) { _, _ -> go() }
+            .setNegativeButton(t("cancel"), null)
+            .show()
+    }
+
+    // ------------------------------------------------------------ буфер обмена
+
+    private var clipDialog: AlertDialog? = null
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus || !::urlInput.isInitialized) return
+        if (!prefs.getBoolean("clip_watch", true) || busy || clipDialog?.isShowing == true) return
+        if (urlInput.text.isNotBlank()) return
+        try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val text = cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+            val url = Regex("https?://\\S+").find(text)?.value ?: return
+            if (url == prefs.getString("last_clip", "")) return
+            prefs.edit().putString("last_clip", url).apply()
+            clipDialog = AlertDialog.Builder(this)
+                .setMessage(t("clip_found") + "\n\n" + url.take(200))
+                .setPositiveButton(t("paste")) { _, _ -> urlInput.setText(url) }
+                .setNegativeButton(t("cancel"), null)
+                .show()
+        } catch (_: Throwable) {
+        }
+    }
+
+    // ------------------------------------------------------------ продолжение прерванной загрузки
+
+    private fun savePending(urls: List<String>, playlist: Boolean, spec: DlSpec) {
+        val o = JSONObject()
+        o.put("urls", JSONArray(urls))
+        o.put("playlist", playlist)
+        o.put("kind", spec.kind)
+        o.put("fmt", spec.fmt)
+        o.put("afmt", spec.afmt)
+        prefs.edit().putString("pending", o.toString()).apply()
+    }
+
+    private fun offerResume() {
+        val raw = prefs.getString("pending", null) ?: return
+        if (busy) return
+        try {
+            val o = JSONObject(raw)
+            val arr = o.getJSONArray("urls")
+            val urls = (0 until arr.length()).map { arr.getString(it) }
+            val spec = DlSpec(o.getString("kind"), o.optString("fmt"), o.optString("afmt"))
+            val playlist = o.optBoolean("playlist")
+            AlertDialog.Builder(this)
+                .setMessage(t("resume_q") + "\n\n" + urls.first().take(120) + if (urls.size > 1) "\n(+${urls.size - 1})" else "")
+                .setCancelable(false)
+                .setPositiveButton(t("resume_yes")) { _, _ -> runDownloadNow(urls, playlist, spec, true) }
+                .setNegativeButton(t("resume_no")) { _, _ ->
+                    prefs.edit().remove("pending").apply()
+                    File(cacheDir, "ytmp").deleteRecursively()
+                }
+                .show()
+        } catch (_: Throwable) {
+            prefs.edit().remove("pending").apply()
+        }
+    }
+
+    // ------------------------------------------------------------ история
+
+    private fun historyFile() = File(filesDir, "history.json")
+
+    private fun loadHistory(): JSONArray = try {
+        JSONArray(historyFile().readText())
+    } catch (_: Throwable) {
+        JSONArray()
+    }
+
+    private fun saveHistory(a: JSONArray) {
+        try {
+            historyFile().writeText(a.toString())
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun addHistory(items: List<Saved>) {
+        val old = loadHistory()
+        val out = JSONArray()
+        for (it in items.reversed()) {
+            out.put(JSONObject().put("name", it.name).put("uri", it.uri.toString()).put("mime", it.mime)
+                .put("time", System.currentTimeMillis()))
+        }
+        for (i in 0 until minOf(old.length(), 199)) out.put(old.get(i))
+        saveHistory(out)
+    }
+
+    private fun refreshHistory() {
+        if (!::historyList.isInitialized) return
+        historyList.removeAllViews()
+        val a = loadHistory()
+        if (a.length() == 0) {
+            historyList.addView(TextView(this).apply { text = t("hist_empty"); setPadding(0, dp(12), 0, 0); tintText(this) })
+            return
+        }
+        val df = SimpleDateFormat("dd.MM HH:mm", Locale.getDefault())
+        for (i in 0 until a.length()) {
+            val o = a.getJSONObject(i)
+            historyList.addView(TextView(this).apply {
+                text = o.optString("name") + "\n" + df.format(Date(o.optLong("time")))
+                textSize = 14f
+                setPadding(dp(8), dp(10), dp(8), dp(10))
+                tintText(this)
+                setOnClickListener { historyActions(i, o) }
+            })
+        }
+    }
+
+    private fun historyActions(index: Int, o: JSONObject) {
+        val uri = Uri.parse(o.optString("uri"))
+        val mime = o.optString("mime", "*/*")
+        AlertDialog.Builder(this)
+            .setTitle(o.optString("name"))
+            .setItems(arrayOf(t("hist_open"), t("hist_share"), t("hist_delete"))) { _, which ->
+                try {
+                    when (which) {
+                        0 -> startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, mime)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                        1 -> startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(mime)
+                            .putExtra(Intent.EXTRA_STREAM, uri)
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), null))
+                        else -> {
+                            try {
+                                if (DocumentsContract.isDocumentUri(this, uri)) DocumentsContract.deleteDocument(contentResolver, uri)
+                                else contentResolver.delete(uri, null, null)
+                            } catch (_: Throwable) {
+                            }
+                            val a = loadHistory()
+                            val n = JSONArray()
+                            for (k in 0 until a.length()) if (k != index) n.put(a.get(k))
+                            saveHistory(n)
+                            refreshHistory()
+                        }
+                    }
+                } catch (_: Throwable) {
+                    toast(t("hist_gone"))
+                }
+            }
+            .show()
+    }
+
+    // ------------------------------------------------------------ награды
+
+    private fun showRewards() {
+        val w = wins()
+        val items = palettes.map { p ->
+            val name = t(p.key)
+            if (w >= p.need) "\u2713 $name" else "\uD83D\uDD12 $name (${f("rw_locked", p.need)})"
+        }
+        AlertDialog.Builder(this)
+            .setTitle(f("rw_wins", w))
+            .setItems(items.toTypedArray()) { _, which ->
+                if (w >= palettes[which].need) {
+                    prefs.edit().putInt("palette", which).apply()
+                    Handler(Looper.getMainLooper()).post { buildUi() }
+                } else {
+                    toast(f("rw_locked", palettes[which].need))
+                }
+            }
+            .setNegativeButton(t("back"), null)
+            .show()
+    }
+
+    private fun registerWin(kind: String) {
+        val before = wins()
+        prefs.edit().putInt("wins", before + 1).putInt("wins_$kind", prefs.getInt("wins_$kind", 0) + 1).apply()
+        val fresh = palettes.firstOrNull { it.need in (before + 1)..(before + 1) }
+        if (fresh != null && prefs.getBoolean("kawaii_unlocked", false)) toast(f("rw_new", t(fresh.key)))
     }
 
     private class VFormat(val label: String, val id: String, val hasAudio: Boolean)
@@ -997,10 +1328,7 @@ class MainActivity : Activity() {
     }
 
     private fun downloadFormat(url: String, playlist: Boolean, fmt: String) {
-        runDownload(listOf(url), playlist) { req ->
-            req.addOption("-f", fmt)
-            req.addOption("--merge-output-format", "mp4")
-        }
+        runDownload(listOf(url), playlist, DlSpec("video", fmt, ""))
     }
 
     private fun cancelDownload() {
@@ -1045,12 +1373,12 @@ class MainActivity : Activity() {
         return sb.toString()
     }
 
-    private fun runDownload(urls: List<String>, playlist: Boolean, configure: (YoutubeDLRequest) -> Unit) {
+    private fun runDownload(urls: List<String>, playlist: Boolean, spec: DlSpec) {
         if (!engineReady || busy) return
         if (prefs.getBoolean("game_gate", false)) {
-            playGate { runDownloadNow(urls, playlist, configure) }
+            playGate { runDownloadNow(urls, playlist, spec, false) }
         } else {
-            runDownloadNow(urls, playlist, configure)
+            runDownloadNow(urls, playlist, spec, false)
         }
     }
 
@@ -1063,6 +1391,7 @@ class MainActivity : Activity() {
             dlg.dismiss()
             if (win) {
                 toast(t("game_win"))
+                registerWin(kind)
                 onWin()
             } else {
                 AlertDialog.Builder(this)
@@ -1077,7 +1406,7 @@ class MainActivity : Activity() {
             "snake" -> SnakeGame(this, onFinish)
             "maze" -> MazeGame(this, onFinish)
             "tank" -> TankGame(this, onFinish)
-            else -> RunnerGame(this, onFinish)
+            else -> PlatformerGame(this, onFinish)
         }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1102,13 +1431,15 @@ class MainActivity : Activity() {
         dlg.show()
     }
 
-    private fun runDownloadNow(urls: List<String>, playlist: Boolean, configure: (YoutubeDLRequest) -> Unit) {
+    private fun runDownloadNow(urls: List<String>, playlist: Boolean, spec: DlSpec, resume: Boolean) {
         if (!engineReady || busy) return
         setBusy(true)
         setStatus(t("st_downloading"))
+        savePending(urls, playlist, spec)
         DownloadService.start(this)
         Thread {
             val tmp = File(cacheDir, "dl")
+            if (!resume) File(cacheDir, "ytmp").deleteRecursively()
             var saved = 0
             var failed = 0
             var stopped = false
@@ -1119,9 +1450,11 @@ class MainActivity : Activity() {
                     tmp.deleteRecursively()
                     tmp.mkdirs()
                     val prefix = if (urls.size > 1) "[${idx + 1}/${urls.size}] " else ""
+                    var embed = spec.kind == "audio"
+                    while (true) {
                     try {
                         val req = baseRequest(url, playlist)
-                        configure(req)
+                        applySpec(spec, req, embed)
                         req.addOption("--newline")
                         val template = if (playlist)
                             "${tmp.absolutePath}/%(playlist_title|PlayList)s/%(playlist_index)s - %(title).120s [%(id)s].%(ext)s"
@@ -1147,17 +1480,28 @@ class MainActivity : Activity() {
 
                         setStatus(f("st_saving", targetLabel()))
                         val n = saveToDownloads(tmp)
-                        if (n == 0) {
+                        if (n.isEmpty()) {
                             failed++
                             log(t("log_no_files"))
                         } else {
-                            saved += n
+                            saved += n.size
+                            addHistory(n)
                         }
+                        break
                     } catch (e: Throwable) {
                         val m = e.message.orEmpty()
                         if (m.contains("interrupted", true) || m.contains("destroyed", true)) {
                             stopped = true
                             break
+                        }
+                        if (embed && (m.contains("thumbnail", true) || m.contains("mutagen", true) ||
+                                m.contains("embed", true) || m.contains("postprocessing", true))
+                        ) {
+                            embed = false
+                            log(t("log_embed_retry"))
+                            tmp.deleteRecursively()
+                            tmp.mkdirs()
+                            continue
                         }
                         failed++
                         lastError = m
@@ -1175,10 +1519,14 @@ class MainActivity : Activity() {
                         } else if (m.contains("sign in", true) || m.contains("Precondition", true)) {
                             log(t("log_hint_signin"))
                         }
+                        break
                     }
+                    }
+                    if (stopped) break
                 }
             } finally {
                 tmp.deleteRecursively()
+                prefs.edit().remove("pending").apply()
             }
 
             val doneTitle: String
@@ -1216,7 +1564,7 @@ class MainActivity : Activity() {
     }
 
     /** Переносит готовые файлы из кэша в выбранную папку или в общую «Download/VAD». */
-    private fun saveToDownloads(dir: File): Int {
+    private fun saveToDownloads(dir: File): List<Saved> {
         val tree = treeUri()
         if (tree != null) {
             try {
@@ -1225,7 +1573,7 @@ class MainActivity : Activity() {
                 log(f("log_saf_fail", e.message))
             }
         }
-        var count = 0
+        val result = ArrayList<Saved>()
         dir.walkTopDown().filter { it.isFile }.forEach { file ->
             val ext = file.extension.lowercase()
             if (ext == "part" || ext == "ytdl" || ext == "temp") return@forEach
@@ -1242,18 +1590,18 @@ class MainActivity : Activity() {
                     file.inputStream().use { it.copyTo(out) }
                 }
                 log(f("log_saved_file", file.name))
-                count++
+                result.add(Saved(file.name, uri, mime))
             }
         }
-        return count
+        return result
     }
 
     /** Сохраняет в папку, выбранную пользователем (Storage Access Framework). */
-    private fun saveToTree(dir: File, tree: Uri): Int {
+    private fun saveToTree(dir: File, tree: Uri): List<Saved> {
         val resolver = contentResolver
         val root = DocumentsContract.buildDocumentUriUsingTree(tree, DocumentsContract.getTreeDocumentId(tree))
         val folders = HashMap<String, Uri>()
-        var count = 0
+        val result = ArrayList<Saved>()
         dir.walkTopDown().filter { it.isFile }.forEach { file ->
             val ext = file.extension.lowercase()
             if (ext == "part" || ext == "ytdl" || ext == "temp") return@forEach
@@ -1280,9 +1628,9 @@ class MainActivity : Activity() {
                 file.inputStream().use { it.copyTo(out) }
             }
             log(f("log_saved_file", file.name))
-            count++
+            result.add(Saved(file.name, doc, mime))
         }
-        return count
+        return result
     }
 }
 
