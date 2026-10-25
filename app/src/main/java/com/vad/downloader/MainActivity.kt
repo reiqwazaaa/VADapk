@@ -375,7 +375,7 @@ class MainActivity : Activity() {
             background = circleBackground()
             contentDescription = t("settings")
             layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(10) }
-            setOnClickListener { tab = 2; applyTabFn?.invoke() }
+            setOnClickListener { tab = if (tab == 2) 0 else 2; applyTabFn?.invoke() }
             if (kawaii) attachPressEffect(this)
         }
         langRow.addView(settingsButton)
@@ -601,7 +601,6 @@ class MainActivity : Activity() {
             if (kawaii) buttonTintList = ColorStateList.valueOf(accent)
             setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(pref, on).apply() }
         })
-        check("set_preview", "preview", true)
         check("set_clip", "clip_watch", true)
         if (prefs.getBoolean("kawaii_unlocked", false)) {
             settings.addView(button(t("rewards_btn")) { showRewards() })
@@ -962,13 +961,13 @@ class MainActivity : Activity() {
     private fun startAuto() {
         val urls = currentUrls() ?: return
         val spec = DlSpec("video", qualityFormat(), "")
-        previewThen(urls, playlistBox.isChecked) { runDownload(urls, playlistBox.isChecked, spec) }
+        runDownload(urls, playlistBox.isChecked, spec)
     }
 
     private fun startMp3() {
         val urls = currentUrls() ?: return
         val spec = DlSpec("audio", "", audioCodes[audioSpinner.selectedItemPosition.coerceIn(0, audioCodes.size - 1)])
-        previewThen(urls, playlistBox.isChecked) { runDownload(urls, playlistBox.isChecked, spec) }
+        runDownload(urls, playlistBox.isChecked, spec)
     }
 
     private fun applySpec(spec: DlSpec, req: YoutubeDLRequest, embed: Boolean) {
@@ -988,84 +987,6 @@ class MainActivity : Activity() {
                 req.addOption("--embed-metadata")
             }
         }
-    }
-
-    // ------------------------------------------------------------ предпросмотр
-
-    private fun previewThen(urls: List<String>, playlist: Boolean, go: () -> Unit) {
-        if (!prefs.getBoolean("preview", true) || urls.size != 1 || playlist || !engineReady || busy) {
-            go()
-            return
-        }
-        setBusy(true)
-        setStatus(t("st_preview"))
-        Thread {
-            var info: JSONObject? = null
-            var bmp: Bitmap? = null
-            try {
-                val req = baseRequest(urls[0], false)
-                req.addOption("-J")
-                req.addOption("--no-warnings")
-                val parsed = JSONObject(YoutubeDL.getInstance().execute(req).out)
-                info = parsed
-                val th = parsed.optString("thumbnail", "")
-                if (th.startsWith("http")) {
-                    bmp = try {
-                        val con = URL(th).openConnection() as HttpURLConnection
-                        con.connectTimeout = 8000
-                        con.readTimeout = 8000
-                        con.inputStream.use { BitmapFactory.decodeStream(it) }
-                    } catch (_: Throwable) {
-                        null
-                    }
-                }
-            } catch (e: Throwable) {
-                log(f("log_error", e.message))
-            }
-            runOnUiThread {
-                setBusy(false)
-                setStatus(t("st_ready"))
-                val i = info
-                if (i == null) go() else showPreview(i, bmp, go)
-            }
-        }.start()
-    }
-
-    private fun fmtDuration(sec: Long): String {
-        val h = sec / 3600
-        val m = (sec % 3600) / 60
-        val s = sec % 60
-        return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, s) else String.format(Locale.US, "%d:%02d", m, s)
-    }
-
-    private fun showPreview(info: JSONObject, bmp: Bitmap?, go: () -> Unit) {
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(4))
-        }
-        if (bmp != null) {
-            box.addView(ImageView(this).apply {
-                setImageBitmap(bmp)
-                adjustViewBounds = true
-                maxHeight = dp(200)
-                scaleType = ImageView.ScaleType.FIT_CENTER
-            })
-        }
-        box.addView(TextView(this).apply {
-            text = info.optString("title", "")
-            textSize = 16f
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(0, dp(8), 0, dp(2))
-        })
-        val by = info.optString("uploader", info.optString("channel", ""))
-        val dur = info.optLong("duration", 0L)
-        val sub = listOf(by, if (dur > 0) fmtDuration(dur) else "").filter { it.isNotEmpty() }.joinToString(" · ")
-        if (sub.isNotEmpty()) box.addView(TextView(this).apply { text = sub })
-        AlertDialog.Builder(this)
-            .setView(box)
-            .setPositiveButton(t("prev_go")) { _, _ -> go() }
-            .setNegativeButton(t("cancel"), null)
-            .show()
     }
 
     // ------------------------------------------------------------ буфер обмена
@@ -1356,12 +1277,37 @@ class MainActivity : Activity() {
     private fun fmtEta(sec: Long): String =
         if (sec < 0) "?" else String.format(Locale.US, "%d:%02d", sec / 60, sec % 60)
 
+    // Сглаживание: yt-dlp для фрагментных потоков даёт "оценочный" размер (~), который скачет.
+    private var smTotal = 0.0
+    private var smP = 0.0
+    private var smDone = 0.0
+    @Volatile private var smoothPercent = 0
+
+    private fun resetProgress() {
+        smTotal = 0.0
+        smP = 0.0
+        smDone = 0.0
+    }
+
     /** -> строка вида "45.3% · 22.6 / 50.0 MB · 2.50 MB/s · 0:12 left" либо null */
     private fun progressText(eta: Long, line: String): String? {
         val m = progressRe.find(line) ?: return null
-        val p = m.groupValues[1].toDouble()
-        val total = toMb(m.groupValues[2].toDouble(), m.groupValues[3])
-        val done = total * p / 100.0
+        val rawP = m.groupValues[1].toDouble()
+        val rawTotal = toMb(m.groupValues[2].toDouble(), m.groupValues[3])
+        val approx = line.contains("~")
+        if (rawP + 30.0 < smP) resetProgress()          // начался новый поток
+        smTotal = when {
+            smTotal == 0.0 -> rawTotal
+            approx -> smTotal * 0.92 + rawTotal * 0.08
+            else -> rawTotal
+        }
+        smP = maxOf(smP, rawP)
+        smDone = maxOf(smDone, smTotal * smP / 100.0)
+        if (smDone > smTotal) smTotal = smDone
+        val p = smP
+        val total = smTotal
+        val done = smDone
+        smoothPercent = p.toInt()
         val mb = t("mb")
         val sb = StringBuilder()
         sb.append(String.format(Locale.US, "%.1f%% · %.1f / %.1f %s", p, done, total, mb))
@@ -1449,6 +1395,7 @@ class MainActivity : Activity() {
                 for ((idx, url) in urls.withIndex()) {
                     tmp.deleteRecursively()
                     tmp.mkdirs()
+                    resetProgress()
                     val prefix = if (urls.size > 1) "[${idx + 1}/${urls.size}] " else ""
                     var embed = spec.kind == "audio"
                     while (true) {
@@ -1463,9 +1410,11 @@ class MainActivity : Activity() {
                         req.addOption("-o", template)
 
                         YoutubeDL.getInstance().execute(req, processId) { progress, eta, line ->
+                            if (line.contains("Destination:")) resetProgress()
                             val info = progressText(eta, line)?.let { prefix + it }
                             runOnUiThread {
-                                if (progress >= 0) progressBar.progress = progress.toInt()
+                                if (info != null) progressBar.progress = smoothPercent
+                                else if (progress >= 0 && smoothPercent == 0) progressBar.progress = progress.toInt()
                                 statusText.text = info ?: (prefix + t("st_downloading") + " ${progress.toInt()}%")
                             }
                             if (info != null) {
