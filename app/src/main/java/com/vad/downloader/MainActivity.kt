@@ -308,17 +308,30 @@ class MainActivity : Activity() {
     private fun setMood(mood: String, delayMs: Long = 0) {
         val girl = girlView ?: return
         moodHandler.removeCallbacksAndMessages(null)
-        girl.setImageResource(
-            when (mood) {
-                "happy" -> R.drawable.kawaii_girl_happy
-                "sad" -> R.drawable.kawaii_girl_sad
-                "wink" -> R.drawable.kawaii_girl_wink
-                else -> R.drawable.kawaii_girl
-            }
-        )
+        girl.setImageResource(girlRes(mood))
         if (mood != "normal" && delayMs > 0) {
-            moodHandler.postDelayed({ girlView?.setImageResource(R.drawable.kawaii_girl) }, delayMs)
+            moodHandler.postDelayed({ girlView?.setImageResource(girlRes("normal")) }, delayMs)
         }
+    }
+
+    /** Картинка девочки с учётом выбранного наряда. */
+    private fun girlRes(mood: String): Int {
+        val tank = prefs.getBoolean("outfit_tank", false) && prefs.getBoolean("outfit_on", false)
+        return when (mood) {
+            "happy" -> if (tank) R.drawable.kawaii_girl_happy_tank else R.drawable.kawaii_girl_happy
+            "sad" -> if (tank) R.drawable.kawaii_girl_sad_tank else R.drawable.kawaii_girl_sad
+            "wink" -> if (tank) R.drawable.kawaii_girl_wink_tank else R.drawable.kawaii_girl_wink
+            else -> if (tank) R.drawable.kawaii_girl_tank else R.drawable.kawaii_girl
+        }
+    }
+
+    private fun showDate() {
+        DateSim(
+            this, { t(it) }, { text, click -> button(text, click) }, { girlRes(it) },
+            bgColors, accent, kawaiiText
+        ) {
+            prefs.edit().putBoolean("outfit_tank", true).apply()
+        }.show()
     }
 
     /** Строит интерфейс заново (при первом запуске и при смене языка), сохраняя состояние. */
@@ -384,8 +397,19 @@ class MainActivity : Activity() {
 
         if (kawaii) {
             val girl = ImageView(this).apply {
-                setImageResource(R.drawable.kawaii_girl)
+                setImageResource(girlRes("normal"))
                 layoutParams = LinearLayout.LayoutParams(dp(110), dp(121))
+                setOnLongClickListener {
+                    if (!prefs.getBoolean("outfit_tank", false)) {
+                        toast(t("outfit_locked"))
+                    } else {
+                        val on = !prefs.getBoolean("outfit_on", false)
+                        prefs.edit().putBoolean("outfit_on", on).apply()
+                        setMood("normal")
+                        toast(t(if (on) "outfit_on" else "outfit_off"))
+                    }
+                    true
+                }
                 setOnClickListener {
                     toast(t("girl_tap"))
                     setMood("wink", 1500)
@@ -604,6 +628,7 @@ class MainActivity : Activity() {
         check("set_clip", "clip_watch", true)
         if (prefs.getBoolean("kawaii_unlocked", false)) {
             settings.addView(button(t("rewards_btn")) { showRewards() })
+            settings.addView(button(t("date_btn")) { showDate() })
         }
         settings.addView(button(t("open_log")) { tab = 1; applyTabFn?.invoke() })
         settings.addView(button(t("back")) { tab = 0; applyTabFn?.invoke() })
