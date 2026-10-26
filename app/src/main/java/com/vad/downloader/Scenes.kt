@@ -76,7 +76,8 @@ class SceneView(ctx: Context) : View(ctx) {
 
     /** Фото комнаты, обрезанное по центру под размер экрана, с лёгким осветлением для читаемости. */
     private fun room(c: Canvas, w: Float, h: Float, res: Int, night: Boolean = false) {
-        val bmp = bmps.getOrPut(res) {
+        val custom = Sprites.bitmap(context, if (res == R.drawable.room_her) "room_her" else "room_home")
+        val bmp = custom ?: bmps.getOrPut(res) {
             try { BitmapFactory.decodeResource(resources, res) } catch (_: Throwable) { null }
         }
         if (bmp == null) {

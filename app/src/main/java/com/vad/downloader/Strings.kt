@@ -34,7 +34,47 @@ object Strings {
 
     private val cache = HashMap<String, Map<String, String>>()
 
+    private val overrides = HashMap<String, String>()
+
+    private fun overridesFile(ctx: Context) = java.io.File(ctx.filesDir, "overrides.json")
+
+    private fun loadOverrides(ctx: Context) {
+        overrides.clear()
+        try {
+            val f = overridesFile(ctx)
+            if (f.isFile) {
+                val o = org.json.JSONObject(f.readText())
+                for (k in o.keys()) overrides[k] = o.getString(k)
+            }
+        } catch (_: Throwable) {
+        }
+    }
+
+    private fun saveOverrides(ctx: Context) {
+        try {
+            val o = org.json.JSONObject()
+            for ((k, v) in overrides) o.put(k, v)
+            overridesFile(ctx).writeText(o.toString())
+        } catch (_: Throwable) {
+        }
+    }
+
+    fun setOverride(ctx: Context, key: String, value: String?) {
+        if (value == null) overrides.remove(key) else overrides[key] = value
+        saveOverrides(ctx)
+    }
+
+    fun clearOverrides(ctx: Context) {
+        overrides.clear()
+        saveOverrides(ctx)
+    }
+
+    fun hasOverride(key: String) = overrides.containsKey(key)
+    fun keys(): List<String> = table("en").keys.sorted()
+    fun defaultOf(key: String): String = t(key)
+
     fun init(ctx: Context) {
+        if (overrides.isEmpty()) loadOverrides(ctx)
         val saved = ctx.getSharedPreferences("vad", Context.MODE_PRIVATE).getString("lang", null)
         val unlocked = ctx.getSharedPreferences("vad", Context.MODE_PRIVATE).getBoolean("kawaii_unlocked", false)
         code = if (saved != null && available(unlocked).any { it.code == saved }) saved else detect()
@@ -53,7 +93,7 @@ object Strings {
 
     val isRtl: Boolean get() = languages.firstOrNull { it.code == code }?.rtl == true
 
-    fun t(key: String): String = table(code)[key] ?: table("en")[key] ?: key
+    fun t(key: String): String = overrides[key] ?: table(code)[key] ?: table("en")[key] ?: key
 
     fun f(key: String, vararg args: Any?): String = String.format(Locale.US, t(key), *args)
 
@@ -246,6 +286,38 @@ object Strings {
         "dt_end_win" to "Today was the best date ever! Thank you... I'll never forget it ♥ Look, I'm wearing my favorite tank top just for you!",
         "dt_end_ok" to "I really enjoyed it! Let's walk together again sometime ^-^",
         "dt_end_fail" to "Oh, I urgently need to run some errands! Bye... (；´д｀)ゞ",
+        "dbg_btn" to "Debug mode",
+        "dbg_pass_title" to "Enter the 4-digit code",
+        "dbg_wrong" to "Wrong code",
+        "dbg_done" to "Done",
+        "dbg_unlock" to "Unlock everything",
+        "dbg_reset" to "Reset progress (wins, outfits, palettes)",
+        "dbg_texts" to "Scene text editor",
+        "dbg_texts_reset" to "Reset all edited texts",
+        "dbg_scenes" to "Custom scenes (developer)",
+        "dbg_sprites" to "Replace sprites",
+        "dbg_exit" to "Leave debug mode",
+        "dbg_search" to "Search key or text",
+        "dbg_default" to "Default",
+        "dbg_new" to "New scene",
+        "dbg_help" to "Syntax help",
+        "dbg_play" to "Play",
+        "dbg_delete" to "Delete",
+        "dbg_replace" to "Choose your image",
+        "dbg_reset_all_sprites" to "Restore all default sprites",
+        "dbg_fail" to "Could not load the image",
+        "dev_empty" to "The scene is empty",
+        "dev_scene_end" to "The end of the scene.",
+        "dbg_help_text" to "A scene is a text file. Nodes are separated by a line with ---.
+
+@bg NAME - background: street, park, cafe, aqua, fun, evening, room_her, room_home, room_her_night, room_home_night
+@mood NAME - Yuta-chan's mood: normal, happy, sad, wink
+@end win|lose - last node (just a Close button)
+Lines of text - what Yuta-chan says
+? label | delta | mood | reply | goto - an answer. delta changes the doki-doki meter (like +2 or -2), mood is her reaction, reply is her answer, goto is the node number to jump to (1 = first). Only the label is required.
+# - comment
+
+If the meter reaches 0, the scene ends badly. Texts of the built-in date can be edited in the text editor (keys starting with dt_).",
         "dt_ep1_t" to "Ask how she lived before",
         "dt_ep1_l1" to "I used to live in the darkest corner of a phone...",
         "dt_ep1_l2" to "They sent me links, and I downloaded, and downloaded, and downloaded.",
@@ -863,6 +935,38 @@ object Strings {
         "dt_end_win" to "Сегодня было самое лучшее свидание! Спасибо тебе... Я никогда этого не забуду ♥ Смотри, я надела свою любимую майку специально для тебя!",
         "dt_end_ok" to "Мне очень понравилось! Давай как-нибудь ещё погуляем ^-^",
         "dt_end_fail" to "Ой, мне срочно нужно по делам! Пока... (；´д｀)ゞ",
+        "dbg_btn" to "Режим отладки",
+        "dbg_pass_title" to "Введите 4-значный код",
+        "dbg_wrong" to "Неверный код",
+        "dbg_done" to "Готово",
+        "dbg_unlock" to "Открыть всё",
+        "dbg_reset" to "Сбросить прогресс (победы, наряды, палитры)",
+        "dbg_texts" to "Редактор текстов сцен",
+        "dbg_texts_reset" to "Сбросить все изменённые тексты",
+        "dbg_scenes" to "Свои сцены (режим разработчика)",
+        "dbg_sprites" to "Замена спрайтов",
+        "dbg_exit" to "Выйти из режима отладки",
+        "dbg_search" to "Поиск по ключу или тексту",
+        "dbg_default" to "По умолчанию",
+        "dbg_new" to "Новая сцена",
+        "dbg_help" to "Справка по формату",
+        "dbg_play" to "Играть",
+        "dbg_delete" to "Удалить",
+        "dbg_replace" to "Выбрать свою картинку",
+        "dbg_reset_all_sprites" to "Вернуть все стандартные спрайты",
+        "dbg_fail" to "Не удалось загрузить картинку",
+        "dev_empty" to "Сцена пустая",
+        "dev_scene_end" to "Конец сцены.",
+        "dbg_help_text" to "Сцена — это текстовый файл. Узлы разделяются строкой ---.
+
+@bg ИМЯ — фон: street, park, cafe, aqua, fun, evening, room_her, room_home, room_her_night, room_home_night
+@mood ИМЯ — эмоция Юты-чан: normal, happy, sad, wink
+@end win|lose — последний узел (только кнопка «Закрыть»)
+Обычные строки — реплика Юты-чан
+? текст | дельта | эмоция | ответ | переход — вариант ответа игрока. Дельта меняет шкалу доки-доки (+2 или -2), эмоция — реакция Юты-чан, ответ — её реплика, переход — номер узла, куда идти (1 — первый). Обязателен только текст.
+# — комментарий
+
+Если шкала дойдёт до нуля, сцена закончится плохо. Тексты встроенного свидания правятся в редакторе текстов (ключи dt_…).",
         "dt_ep1_t" to "Спросить, как ей жилось раньше",
         "dt_ep1_l1" to "Раньше я жила в самом тёмном углу телефона...",
         "dt_ep1_l2" to "Мне присылали ссылки, а я качала, качала, качала.",
@@ -3259,6 +3363,38 @@ object Strings {
         "dt_end_win" to "Сегодня было самое лучшее свидание! Спасибо тебе... Я никогда этого не забуду ♥ Смотри, я надела свою любимую майку специально для тебя!",
         "dt_end_ok" to "Мне очень понравилось! Давай как-нибудь ещё погуляем ^-^",
         "dt_end_fail" to "Ой, мне срочно нужно по делам! Пока... (；´д｀)ゞ",
+        "dbg_btn" to "Режим отладки",
+        "dbg_pass_title" to "Введите 4-значный код",
+        "dbg_wrong" to "Неверный код",
+        "dbg_done" to "Готово",
+        "dbg_unlock" to "Открыть всё",
+        "dbg_reset" to "Сбросить прогресс (победы, наряды, палитры)",
+        "dbg_texts" to "Редактор текстов сцен",
+        "dbg_texts_reset" to "Сбросить все изменённые тексты",
+        "dbg_scenes" to "Свои сцены (режим разработчика)",
+        "dbg_sprites" to "Замена спрайтов",
+        "dbg_exit" to "Выйти из режима отладки",
+        "dbg_search" to "Поиск по ключу или тексту",
+        "dbg_default" to "По умолчанию",
+        "dbg_new" to "Новая сцена",
+        "dbg_help" to "Справка по формату",
+        "dbg_play" to "Играть",
+        "dbg_delete" to "Удалить",
+        "dbg_replace" to "Выбрать свою картинку",
+        "dbg_reset_all_sprites" to "Вернуть все стандартные спрайты",
+        "dbg_fail" to "Не удалось загрузить картинку",
+        "dev_empty" to "Сцена пустая",
+        "dev_scene_end" to "Конец сцены.",
+        "dbg_help_text" to "Сцена — это текстовый файл. Узлы разделяются строкой ---.
+
+@bg ИМЯ — фон: street, park, cafe, aqua, fun, evening, room_her, room_home, room_her_night, room_home_night
+@mood ИМЯ — эмоция Юты-чан: normal, happy, sad, wink
+@end win|lose — последний узел (только кнопка «Закрыть»)
+Обычные строки — реплика Юты-чан
+? текст | дельта | эмоция | ответ | переход — вариант ответа игрока. Дельта меняет шкалу доки-доки (+2 или -2), эмоция — реакция Юты-чан, ответ — её реплика, переход — номер узла, куда идти (1 — первый). Обязателен только текст.
+# — комментарий
+
+Если шкала дойдёт до нуля, сцена закончится плохо. Тексты встроенного свидания правятся в редакторе текстов (ключи dt_…).",
         "dt_ep1_t" to "Спросить, как ей жилось раньше",
         "dt_ep1_l1" to "Раньше я жила в самом тёмном углу телефона...",
         "dt_ep1_l2" to "Мне присылали ссылки, а я качала, качала, качала.",

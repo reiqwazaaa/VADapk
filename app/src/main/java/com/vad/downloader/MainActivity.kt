@@ -308,9 +308,9 @@ class MainActivity : Activity() {
     private fun setMood(mood: String, delayMs: Long = 0) {
         val girl = girlView ?: return
         moodHandler.removeCallbacksAndMessages(null)
-        girl.setImageResource(girlRes(mood))
+        girl.setImageDrawable(girlDrawable(mood))
         if (mood != "normal" && delayMs > 0) {
-            moodHandler.postDelayed({ girlView?.setImageResource(girlRes("normal")) }, delayMs)
+            moodHandler.postDelayed({ girlView?.setImageDrawable(girlDrawable("normal")) }, delayMs)
         }
     }
 
@@ -347,6 +347,17 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun girlDrawable(mood: String): android.graphics.drawable.Drawable? =
+        Sprites.drawable(this, Sprites.girlSlot(outfit(), mood)) ?: getDrawable(girlRes(mood))
+
+    private val dev by lazy {
+        DevTools(
+            this, prefs, { t(it) }, { text, click -> button(text, click) }, { girlDrawable(it) },
+            { Triple(bgColors, accent, kawaiiText) },
+            { Handler(Looper.getMainLooper()).post { buildUi() } }
+        )
+    }
+
     /** Долгое нажатие: следующий открытый наряд по кругу. */
     private fun nextOutfit() {
         val open = listOf(0) + (if (prefs.getBoolean("outfit_tank", false)) listOf(1) else emptyList()) +
@@ -363,7 +374,7 @@ class MainActivity : Activity() {
 
     private fun showDate() {
         DateSim(
-            this, { t(it) }, { text, click -> button(text, click) }, { girlRes(it) },
+            this, { t(it) }, { text, click -> button(text, click) }, { girlDrawable(it) },
             bgColors, accent, kawaiiText,
             prefs.getBoolean("outfit_tank", false),
             { prefs.edit().putBoolean("outfit_tank", true).apply() },
@@ -434,7 +445,7 @@ class MainActivity : Activity() {
 
         if (kawaii) {
             val girl = ImageView(this).apply {
-                setImageResource(girlRes("normal"))
+                setImageDrawable(girlDrawable("normal"))
                 layoutParams = LinearLayout.LayoutParams(dp(110), dp(121))
                 setOnLongClickListener {
                     nextOutfit()
@@ -661,6 +672,7 @@ class MainActivity : Activity() {
             settings.addView(button(t("date_btn")) { showDate() })
         }
         settings.addView(button(t("open_log")) { tab = 1; applyTabFn?.invoke() })
+        settings.addView(button(t("dbg_btn")) { dev.open() })
         settings.addView(button(t("back")) { tab = 0; applyTabFn?.invoke() })
 
         val mainScroll = ScrollView(this).apply { addView(main) }
@@ -946,6 +958,10 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 44 && resultCode == RESULT_OK) {
+            data?.data?.let { dev.onSpritePicked(it) }
+            return
+        }
         if (requestCode == reqPickCookies && resultCode == RESULT_OK) {
             val uri = data?.data ?: return
             try {

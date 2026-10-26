@@ -24,7 +24,7 @@ class DateSim(
     private val ctx: Context,
     private val t: (String) -> String,
     private val button: (String, () -> Unit) -> Button,
-    private val girlRes: (String) -> Int,
+    private val girlRes: (String) -> android.graphics.drawable.Drawable?,
     private val bg: IntArray,
     private val accent: Int,
     private val textColor: Int,
@@ -107,7 +107,7 @@ class DateSim(
 
         // девочка и пузырь с плавающим "+♥"
         val stage = FrameLayout(ctx)
-        girl = ImageView(ctx).apply { setImageResource(girlRes("normal")) }
+        girl = ImageView(ctx).apply { setImageDrawable(girlRes("normal")) }
         stage.addView(girl, FrameLayout.LayoutParams(dp(170), dp(204), Gravity.CENTER))
         delta = TextView(ctx).apply {
             textSize = 26f
@@ -146,7 +146,7 @@ class DateSim(
     }
 
     private fun setMood(m: String) {
-        girl.setImageResource(girlRes(m))
+        girl.setImageDrawable(girlRes(m))
         girl.animate().scaleX(1.08f).scaleY(1.08f).setDuration(110).withEndAction {
             girl.animate().scaleX(1f).scaleY(1f).setDuration(160).start()
         }.start()
