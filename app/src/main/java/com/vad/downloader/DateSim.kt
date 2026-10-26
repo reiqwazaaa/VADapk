@@ -30,12 +30,16 @@ class DateSim(
     private val textColor: Int,
     private val onWin: () -> Unit
 ) {
-    private class Choice(val label: String, val delta: Int, val reply: String, val mood: String)
+    private class Choice(val label: String, val delta: Int, val reply: String, val mood: String, val place: String? = null)
     private class Node(val text: String, val mood: String, val choices: List<Choice>)
 
-    private val max = 9
-    private var doki = 3
+    private val max = 12
+    private var doki = 4
     private var step = 0
+    private val ev = (1..4).random()
+    private val tk = (1..3).random()
+    private val steps = listOf("s0", "where", "a1", "a2", "ev", "tk", "eve", "gift", "bye")
+    private lateinit var scene: SceneView
     private val places = listOf("park", "cafe", "aqua", "fun")
     private val hint = places.random()
     private var place = "park"
@@ -53,16 +57,26 @@ class DateSim(
     fun show() {
         dlg = Dialog(ctx, android.R.style.Theme_Material_NoActionBar_Fullscreen)
         dlg.setCancelable(false)
+        scene = SceneView(ctx)
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, bg)
             setPadding(dp(16), dp(28), dp(16), dp(16))
             layoutDirection = View.LAYOUT_DIRECTION_LTR
+        }
+        val frame = FrameLayout(ctx).apply {
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, bg)
+            addView(scene, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(root, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         }
         // шкала doki-doki
         val top = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(18).toFloat()
+                setColor(0xB3FFFFFF.toInt())
+            }
         }
         top.addView(TextView(ctx).apply {
             text = "♥ " + t("doki_label")
@@ -119,9 +133,9 @@ class DateSim(
         root.addView(android.widget.ScrollView(ctx).apply { addView(choicesBox) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { topMargin = dp(8) })
 
-        dlg.setContentView(root)
+        dlg.setContentView(frame)
         dlg.show()
-        showNode(nodeFor(0))
+        showNode(nodeFor(steps[0]))
     }
 
     private fun setMood(m: String) {
@@ -132,6 +146,7 @@ class DateSim(
     }
 
     private fun showNode(n: Node) {
+        scene.scene = sceneFor(steps[step])
         setMood(n.mood)
         bubble.text = n.text
         choicesBox.removeAllViews()
@@ -141,6 +156,7 @@ class DateSim(
     }
 
     private fun choose(c: Choice) {
+        c.place?.let { place = it }
         doki = (doki + c.delta).coerceIn(0, max)
         ObjectAnimator.ofInt(meter, "progress", doki * 10).setDuration(450).start()
         floatDelta(c.delta)
@@ -153,13 +169,13 @@ class DateSim(
                 setMood("sad")
                 choicesBox.addView(button(t("date_close")) { dlg.dismiss() })
             }
-            step >= 4 -> {
+            step >= steps.lastIndex -> {
                 choicesBox.addView(button(t("date_next")) { finishDate() })
             }
             else -> {
                 choicesBox.addView(button(t("date_next")) {
                     step++
-                    showNode(nodeFor(step))
+                    showNode(nodeFor(steps[step]))
                 })
             }
         }
@@ -188,29 +204,33 @@ class DateSim(
 
     // ------------------------------------------------------------------ сценарий
 
-    private fun nodeFor(i: Int): Node = when (i) {
-        0 -> Node(
-            t("dt_hi") + "\n\n" + t("dt_hint_$hint"), "happy",
-            listOf(
-                Choice(t("dt_hi_1"), 2, t("dt_hi_r1"), "happy"),
-                Choice(t("dt_hi_2"), 1, t("dt_hi_r2"), "wink"),
-                Choice(t("dt_hi_3"), -2, t("dt_hi_r3"), "sad")
-            )
-        )
-        1 -> Node(
+    private fun sceneFor(k: String): String = when (k) {
+        "s0", "where" -> "street"
+        "a1", "a2", "ev", "tk" -> place
+        else -> "evening"
+    }
+
+    private fun nodeFor(k: String): Node = when (k) {
+        "s0" -> Node(t("dt_hi") + "\n\n" + t("dt_hint_$hint"), "happy", quad("dt_s0"))
+        "where" -> Node(
             t("dt_where"), "normal",
-            places.map { p -> Choice(t("dt_pl_$p"), if (p == hint) 2 else 1, t("dt_plr_$p"), "happy") }
-        ).also { }
-        2 -> Node(t("dt_act_$place"), "normal", trio("dt_act_$place"))
-        3 -> Node(t("dt_talk"), "normal", trio("dt_talk"))
+            places.map { p -> Choice(t("dt_pl_$p"), if (p == hint) 2 else 1, t("dt_plr_$p"), "happy", p) }
+        )
+        "a1" -> Node(t("dt_a_${place}1"), "normal", quad("dt_a_${place}1"))
+        "a2" -> Node(t("dt_a_${place}2"), "normal", quad("dt_a_${place}2"))
+        "ev" -> Node(t("dt_ev$ev"), "normal", quad("dt_ev$ev"))
+        "tk" -> Node(t("dt_tk$tk"), "normal", quad("dt_tk$tk"))
+        "eve" -> Node(t("dt_eve"), "normal", quad("dt_eve"))
+        "bye" -> Node(t("dt_bye"), "wink", quad("dt_bye"))
         else -> giftNode()
     }
 
-    /** Три варианта: хороший (+2), нейтральный (+1), плохой (-2). */
-    private fun trio(prefix: String) = listOf(
+    /** Четыре варианта: отлично (+2), хорошо (+1), нейтрально (0), плохо (-2). */
+    private fun quad(prefix: String): List<Choice> = listOf(
         Choice(t("${prefix}_1"), 2, t("${prefix}_r1"), "happy"),
-        Choice(t("${prefix}_2"), 1, t("${prefix}_r2"), "normal"),
-        Choice(t("${prefix}_3"), -2, t("${prefix}_r3"), "sad")
+        Choice(t("${prefix}_2"), 1, t("${prefix}_r2"), "wink"),
+        Choice(t("${prefix}_3"), 0, t("${prefix}_r3"), "normal"),
+        Choice(t("${prefix}_4"), -2, t("${prefix}_r4"), "sad")
     )
 
     private fun giftDelta(g: String): Int = when (g) {
