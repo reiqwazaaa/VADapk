@@ -28,7 +28,9 @@ class DateSim(
     private val bg: IntArray,
     private val accent: Int,
     private val textColor: Int,
-    private val onWin: () -> Unit
+    private val hadTank: Boolean,
+    private val onWin: () -> Unit,
+    private val onPajama: () -> Unit
 ) {
     private class Choice(val label: String, val delta: Int, val reply: String, val mood: String, val place: String? = null)
     private class Node(val text: String, val mood: String, val choices: List<Choice>)
@@ -227,21 +229,86 @@ class DateSim(
 
     private fun winRoom() {
         setMood("happy")
-        bubble.text = t(roomEnd) + "\n\n" + t("dt_end_win") + "\n\n" + t("date_reward")
-        onWin()
+        bubble.text = t(roomEnd)
         choicesBox.removeAllViews()
-        choicesBox.addView(button(t("date_close")) { dlg.dismiss() })
+        choicesBox.addView(button(t("date_next")) { sleepover() })
+    }
+
+    // ------------------------------------------------------------------ ночёвка: разговор по душам
+
+    private val epLines = intArrayOf(5, 4, 5, 4, 5)
+    private val lineMoods = listOf("normal", "wink", "happy", "normal", "happy")
+
+    private fun sleepover() {
+        val night = (roomScene ?: "room_her") + "_night"
+        scene.scene = night
+        roomScene = night
+        setMood("wink")
+        bubble.text = t(if (roomEnd == "dt_home_end1") "dt_so_intro_her" else "dt_so_intro_his")
+        choicesBox.removeAllViews()
+        choicesBox.addView(button(t("date_next")) { pickTopic() })
+    }
+
+    private fun pickTopic() {
+        setMood("normal")
+        bubble.text = t("dt_so_pick")
+        choicesBox.removeAllViews()
+        for (i in 1..5) choicesBox.addView(button(t("dt_ep${i}_t")) { playLine(i, 1) })
+    }
+
+    private fun playLine(ep: Int, n: Int) {
+        setMood(lineMoods[(n - 1) % lineMoods.size])
+        bubble.text = t("dt_ep${ep}_l$n")
+        choicesBox.removeAllViews()
+        choicesBox.addView(button(t("date_next")) {
+            if (n < epLines[ep - 1]) playLine(ep, n + 1) else askQuestion(ep)
+        })
+    }
+
+    private fun askQuestion(ep: Int) {
+        setMood("wink")
+        bubble.text = t("dt_ep${ep}_q")
+        choicesBox.removeAllViews()
+        for (i in 1..5) choicesBox.addView(button(t("dt_ep${ep}_a$i")) {
+            setMood("happy")
+            bubble.text = t("dt_ep${ep}_ar$i")
+            choicesBox.removeAllViews()
+            choicesBox.addView(button(t("date_next")) { goodNight() })
+        })
+    }
+
+    private fun goodNight() {
+        setMood("normal")
+        bubble.text = t("dt_so_gn")
+        choicesBox.removeAllViews()
+        choicesBox.addView(button(t("dt_so_you")) {
+            setMood("happy")
+            bubble.text = t("dt_so_end") + "\n\n" + t("date_reward_pj")
+            onPajama()
+            choicesBox.removeAllViews()
+            choicesBox.addView(button(t("date_close")) { dlg.dismiss() })
+        })
     }
 
     private fun finishDate() {
         choicesBox.removeAllViews()
         if (doki >= max) {
             setMood("happy")
-            scene.scene = "evening"
-            bubble.text = t("dt_home")
-            choicesBox.addView(button(t("dt_home_1")) { goHome("room_her", "dt_home_r1", "dt_home_end1") })
-            choicesBox.addView(button(t("dt_home_2")) { goHome("room_home", "dt_home_r2", "dt_home_end2") })
-            return
+            if (!hadTank) {
+                bubble.text = t("dt_end_win") + "\n\n" + t("date_reward")
+                onWin()
+            } else {
+                scene.scene = "evening"
+                bubble.text = t("dt_home")
+                choicesBox.addView(button(t("dt_home_1")) { goHome("room_her", "dt_home_r1", "dt_home_end1") })
+                choicesBox.addView(button(t("dt_home_2")) { goHome("room_home", "dt_home_r2", "dt_home_end2") })
+                choicesBox.addView(button(t("dt_home_3")) {
+                    bubble.text = t("dt_end_win")
+                    choicesBox.removeAllViews()
+                    choicesBox.addView(button(t("date_close")) { dlg.dismiss() })
+                })
+                return
+            }
         } else {
             setMood("wink")
             bubble.text = t("dt_end_ok")

@@ -314,24 +314,61 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Картинка девочки с учётом выбранного наряда. */
-    private fun girlRes(mood: String): Int {
-        val tank = prefs.getBoolean("outfit_tank", false) && prefs.getBoolean("outfit_on", false)
-        return when (mood) {
-            "happy" -> if (tank) R.drawable.kawaii_girl_happy_tank else R.drawable.kawaii_girl_happy
-            "sad" -> if (tank) R.drawable.kawaii_girl_sad_tank else R.drawable.kawaii_girl_sad
-            "wink" -> if (tank) R.drawable.kawaii_girl_wink_tank else R.drawable.kawaii_girl_wink
-            else -> if (tank) R.drawable.kawaii_girl_tank else R.drawable.kawaii_girl
+    /** Текущий наряд: 0 худи, 1 майка, 2 пижама (если открыт). */
+    private fun outfit(): Int {
+        val cur = if (prefs.contains("outfit_cur")) prefs.getInt("outfit_cur", 0)
+        else if (prefs.getBoolean("outfit_on", false)) 1 else 0
+        return when {
+            cur == 1 && prefs.getBoolean("outfit_tank", false) -> 1
+            cur == 2 && prefs.getBoolean("outfit_pj", false) -> 2
+            else -> 0
         }
+    }
+
+    /** Картинка девочки с учётом выбранного наряда. */
+    private fun girlRes(mood: String): Int = when (outfit()) {
+        1 -> when (mood) {
+            "happy" -> R.drawable.kawaii_girl_happy_tank
+            "sad" -> R.drawable.kawaii_girl_sad_tank
+            "wink" -> R.drawable.kawaii_girl_wink_tank
+            else -> R.drawable.kawaii_girl_tank
+        }
+        2 -> when (mood) {
+            "happy" -> R.drawable.kawaii_girl_happy_pj
+            "sad" -> R.drawable.kawaii_girl_sad_pj
+            "wink" -> R.drawable.kawaii_girl_wink_pj
+            else -> R.drawable.kawaii_girl_pj
+        }
+        else -> when (mood) {
+            "happy" -> R.drawable.kawaii_girl_happy
+            "sad" -> R.drawable.kawaii_girl_sad
+            "wink" -> R.drawable.kawaii_girl_wink
+            else -> R.drawable.kawaii_girl
+        }
+    }
+
+    /** Долгое нажатие: следующий открытый наряд по кругу. */
+    private fun nextOutfit() {
+        val open = listOf(0) + (if (prefs.getBoolean("outfit_tank", false)) listOf(1) else emptyList()) +
+            (if (prefs.getBoolean("outfit_pj", false)) listOf(2) else emptyList())
+        if (open.size == 1) {
+            toast(t("outfit_locked"))
+            return
+        }
+        val next = open[(open.indexOf(outfit()) + 1) % open.size]
+        prefs.edit().putInt("outfit_cur", next).apply()
+        setMood("normal")
+        toast(t(when (next) { 1 -> "outfit_on"; 2 -> "outfit_pj"; else -> "outfit_off" }))
     }
 
     private fun showDate() {
         DateSim(
             this, { t(it) }, { text, click -> button(text, click) }, { girlRes(it) },
-            bgColors, accent, kawaiiText
-        ) {
-            prefs.edit().putBoolean("outfit_tank", true).apply()
-        }.show()
+            bgColors, accent, kawaiiText,
+            prefs.getBoolean("outfit_tank", false),
+            { prefs.edit().putBoolean("outfit_tank", true).apply() },
+            { prefs.edit().putBoolean("outfit_pj", true).apply() }
+        ).show()
     }
 
     /** Строит интерфейс заново (при первом запуске и при смене языка), сохраняя состояние. */
@@ -400,14 +437,7 @@ class MainActivity : Activity() {
                 setImageResource(girlRes("normal"))
                 layoutParams = LinearLayout.LayoutParams(dp(110), dp(121))
                 setOnLongClickListener {
-                    if (!prefs.getBoolean("outfit_tank", false)) {
-                        toast(t("outfit_locked"))
-                    } else {
-                        val on = !prefs.getBoolean("outfit_on", false)
-                        prefs.edit().putBoolean("outfit_on", on).apply()
-                        setMood("normal")
-                        toast(t(if (on) "outfit_on" else "outfit_off"))
-                    }
+                    nextOutfit()
                     true
                 }
                 setOnClickListener {

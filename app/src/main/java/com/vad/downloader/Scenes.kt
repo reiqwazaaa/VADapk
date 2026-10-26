@@ -65,6 +65,8 @@ class SceneView(ctx: Context) : View(ctx) {
             "evening" -> city(c, w, h, true)
             "room_home" -> room(c, w, h, R.drawable.room_home)
             "room_her" -> room(c, w, h, R.drawable.room_her)
+            "room_home_night" -> room(c, w, h, R.drawable.room_home, true)
+            "room_her_night" -> room(c, w, h, R.drawable.room_her, true)
             else -> city(c, w, h, false)
         }
         postInvalidateOnAnimation()
@@ -73,7 +75,7 @@ class SceneView(ctx: Context) : View(ctx) {
     private val bmps = HashMap<Int, Bitmap?>()
 
     /** Фото комнаты, обрезанное по центру под размер экрана, с лёгким осветлением для читаемости. */
-    private fun room(c: Canvas, w: Float, h: Float, res: Int) {
+    private fun room(c: Canvas, w: Float, h: Float, res: Int, night: Boolean = false) {
         val bmp = bmps.getOrPut(res) {
             try { BitmapFactory.decodeResource(resources, res) } catch (_: Throwable) { null }
         }
@@ -87,7 +89,7 @@ class SceneView(ctx: Context) : View(ctx) {
         val sx = (bmp.width - sw) / 2
         val sy = (bmp.height - sh) / 2
         c.drawBitmap(bmp, Rect(sx, sy, sx + sw, sy + sh), RectF(0f, 0f, w, h), null)
-        p.color = 0x33FFFFFF
+        p.color = if (night) 0x99120A33.toInt() else 0x33FFFFFF
         c.drawRect(0f, 0f, w, h, p)
     }
 
