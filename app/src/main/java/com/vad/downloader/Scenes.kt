@@ -1,7 +1,10 @@
 package com.vad.downloader
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Rect
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
@@ -60,9 +63,32 @@ class SceneView(ctx: Context) : View(ctx) {
             "aqua" -> aqua(c, w, h)
             "fun" -> funfair(c, w, h)
             "evening" -> city(c, w, h, true)
+            "room_home" -> room(c, w, h, R.drawable.room_home)
+            "room_her" -> room(c, w, h, R.drawable.room_her)
             else -> city(c, w, h, false)
         }
         postInvalidateOnAnimation()
+    }
+
+    private val bmps = HashMap<Int, Bitmap?>()
+
+    /** Фото комнаты, обрезанное по центру под размер экрана, с лёгким осветлением для читаемости. */
+    private fun room(c: Canvas, w: Float, h: Float, res: Int) {
+        val bmp = bmps.getOrPut(res) {
+            try { BitmapFactory.decodeResource(resources, res) } catch (_: Throwable) { null }
+        }
+        if (bmp == null) {
+            fillGrad(c, "roomfb", 0xFFFFE9D6.toInt(), 0xFFFFC9B0.toInt())
+            return
+        }
+        val scale = maxOf(w / bmp.width, h / bmp.height)
+        val sw = (w / scale).toInt().coerceAtMost(bmp.width)
+        val sh = (h / scale).toInt().coerceAtMost(bmp.height)
+        val sx = (bmp.width - sw) / 2
+        val sy = (bmp.height - sh) / 2
+        c.drawBitmap(bmp, Rect(sx, sy, sx + sw, sy + sh), RectF(0f, 0f, w, h), null)
+        p.color = 0x33FFFFFF
+        c.drawRect(0f, 0f, w, h, p)
     }
 
     private fun city(c: Canvas, w: Float, h: Float, eve: Boolean) {

@@ -33,12 +33,12 @@ class DateSim(
     private class Choice(val label: String, val delta: Int, val reply: String, val mood: String, val place: String? = null)
     private class Node(val text: String, val mood: String, val choices: List<Choice>)
 
-    private val max = 12
-    private var doki = 4
+    private val max = 15
+    private var doki = 5
     private var step = 0
-    private val ev = (1..4).random()
-    private val tk = (1..3).random()
-    private val steps = listOf("s0", "where", "a1", "a2", "ev", "tk", "eve", "gift", "bye")
+    private val evs = (1..8).shuffled().take(2)
+    private val tks = (1..5).shuffled().take(2)
+    private val steps = listOf("s0", "where", "a1", "a2", "ev1", "tk1", "a3", "ev2", "tk2", "eve", "gift", "bye")
     private lateinit var scene: SceneView
     private val places = listOf("park", "cafe", "aqua", "fun")
     private val hint = places.random()
@@ -189,12 +189,30 @@ class DateSim(
         delta.animate().translationY(-dp(10).toFloat()).alpha(0f).setDuration(1100).start()
     }
 
+    /** Макс. шкала: продолжение у неё дома или у игрока, фон - фото комнаты. */
+    private fun goHome(room: String, reply: String, end: String) {
+        scene.scene = room
+        setMood("wink")
+        bubble.text = t(reply)
+        choicesBox.removeAllViews()
+        choicesBox.addView(button(t("date_next")) {
+            setMood("happy")
+            bubble.text = t(end) + "\n\n" + t("dt_end_win") + "\n\n" + t("date_reward")
+            onWin()
+            choicesBox.removeAllViews()
+            choicesBox.addView(button(t("date_close")) { dlg.dismiss() })
+        })
+    }
+
     private fun finishDate() {
         choicesBox.removeAllViews()
         if (doki >= max) {
             setMood("happy")
-            bubble.text = t("dt_end_win") + "\n\n" + t("date_reward")
-            onWin()
+            scene.scene = "evening"
+            bubble.text = t("dt_home")
+            choicesBox.addView(button(t("dt_home_1")) { goHome("room_her", "dt_home_r1", "dt_home_end1") })
+            choicesBox.addView(button(t("dt_home_2")) { goHome("room_home", "dt_home_r2", "dt_home_end2") })
+            return
         } else {
             setMood("wink")
             bubble.text = t("dt_end_ok")
@@ -206,7 +224,7 @@ class DateSim(
 
     private fun sceneFor(k: String): String = when (k) {
         "s0", "where" -> "street"
-        "a1", "a2", "ev", "tk" -> place
+        "a1", "a2", "a3", "ev1", "ev2", "tk1", "tk2" -> place
         else -> "evening"
     }
 
@@ -218,8 +236,15 @@ class DateSim(
         )
         "a1" -> Node(t("dt_a_${place}1"), "normal", quad("dt_a_${place}1"))
         "a2" -> Node(t("dt_a_${place}2"), "normal", quad("dt_a_${place}2"))
-        "ev" -> Node(t("dt_ev$ev"), "normal", quad("dt_ev$ev"))
-        "tk" -> Node(t("dt_tk$tk"), "normal", quad("dt_tk$tk"))
+        "a3" -> Node(t("dt_a_${place}3"), "normal", quad("dt_a_${place}3"))
+        "ev1", "ev2" -> {
+            val n = evs[if (k == "ev1") 0 else 1]
+            Node(t("dt_ev$n"), "normal", quad("dt_ev$n"))
+        }
+        "tk1", "tk2" -> {
+            val n = tks[if (k == "tk1") 0 else 1]
+            Node(t("dt_tk$n"), "normal", quad("dt_tk$n"))
+        }
         "eve" -> Node(t("dt_eve"), "normal", quad("dt_eve"))
         "bye" -> Node(t("dt_bye"), "wink", quad("dt_bye"))
         else -> giftNode()
