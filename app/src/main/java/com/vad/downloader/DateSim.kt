@@ -40,6 +40,11 @@ class DateSim(
     private val tks = (1..5).shuffled().take(2)
     private val steps = listOf("s0", "where", "a1", "a2", "ev1", "tk1", "a3", "ev2", "tk2", "eve", "gift", "bye")
     private lateinit var scene: SceneView
+    private var inRoom = false
+    private var roomScene: String? = null
+    private var roomNodes: List<Node> = emptyList()
+    private var roomStep = 0
+    private var roomEnd = ""
     private val places = listOf("park", "cafe", "aqua", "fun")
     private val hint = places.random()
     private var place = "park"
@@ -146,7 +151,7 @@ class DateSim(
     }
 
     private fun showNode(n: Node) {
-        scene.scene = sceneFor(steps[step])
+        scene.scene = roomScene ?: sceneFor(steps[step])
         setMood(n.mood)
         bubble.text = n.text
         choicesBox.removeAllViews()
@@ -159,15 +164,21 @@ class DateSim(
         c.place?.let { place = it }
         doki = (doki + c.delta).coerceIn(0, max)
         ObjectAnimator.ofInt(meter, "progress", doki * 10).setDuration(450).start()
-        floatDelta(c.delta)
+        floatDelta(maxOf(c.delta, -3))
         setMood(c.mood)
         bubble.text = c.reply
         choicesBox.removeAllViews()
         when {
             doki <= 0 -> {
-                bubble.text = c.reply + "\n\n" + t("dt_end_fail")
+                bubble.text = c.reply + "\n\n" + t(if (inRoom) "dt_end_fail2" else "dt_end_fail")
                 setMood("sad")
                 choicesBox.addView(button(t("date_close")) { dlg.dismiss() })
+            }
+            inRoom -> {
+                choicesBox.addView(button(t("date_next")) {
+                    roomStep++
+                    if (roomStep < roomNodes.size) showNode(roomNodes[roomStep]) else winRoom()
+                })
             }
             step >= steps.lastIndex -> {
                 choicesBox.addView(button(t("date_next")) { finishDate() })
@@ -191,17 +202,35 @@ class DateSim(
 
     /** Макс. шкала: продолжение у неё дома или у игрока, фон - фото комнаты. */
     private fun goHome(room: String, reply: String, end: String) {
+        inRoom = true
+        roomScene = room
+        roomEnd = end
+        roomStep = 0
+        roomNodes = if (room == "room_her") listOf(
+            Node(t("dt_w1"), "happy", quad4("dt_w1", intArrayOf(3, -99, -99, -99))),
+            Node(t("dt_w2"), "normal", quad4("dt_w2", intArrayOf(2, 2, -99, -99)))
+        ) else listOf(
+            Node(t("dt_h1"), "normal", quad4("dt_h1", intArrayOf(2, 1, 1, 0))),
+            Node(t("dt_h2"), "normal", quad4("dt_h2", intArrayOf(2, 1, 0, -99))),
+            Node(t("dt_h3"), "normal", quad4("dt_h3", intArrayOf(2, 2, 1, -99)))
+        )
         scene.scene = room
         setMood("wink")
         bubble.text = t(reply)
         choicesBox.removeAllViews()
-        choicesBox.addView(button(t("date_next")) {
-            setMood("happy")
-            bubble.text = t(end) + "\n\n" + t("dt_end_win") + "\n\n" + t("date_reward")
-            onWin()
-            choicesBox.removeAllViews()
-            choicesBox.addView(button(t("date_close")) { dlg.dismiss() })
-        })
+        choicesBox.addView(button(t("date_next")) { showNode(roomNodes[0]) })
+    }
+
+    private fun quad4(prefix: String, d: IntArray): List<Choice> = (1..4).map { i ->
+        Choice(t("${prefix}_$i"), d[i - 1], t("${prefix}_r$i"), if (d[i - 1] < 0) "sad" else if (d[i - 1] >= 2) "happy" else "wink")
+    }
+
+    private fun winRoom() {
+        setMood("happy")
+        bubble.text = t(roomEnd) + "\n\n" + t("dt_end_win") + "\n\n" + t("date_reward")
+        onWin()
+        choicesBox.removeAllViews()
+        choicesBox.addView(button(t("date_close")) { dlg.dismiss() })
     }
 
     private fun finishDate() {
