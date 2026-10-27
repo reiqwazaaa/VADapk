@@ -308,16 +308,7 @@ object Strings {
         "dbg_fail" to "Could not load the image",
         "dev_empty" to "The scene is empty",
         "dev_scene_end" to "The end of the scene.",
-        "dbg_help_text" to "A scene is a text file. Nodes are separated by a line with ---.
-
-@bg NAME - background: street, park, cafe, aqua, fun, evening, room_her, room_home, room_her_night, room_home_night
-@mood NAME - Yuta-chan's mood: normal, happy, sad, wink
-@end win|lose - last node (just a Close button)
-Lines of text - what Yuta-chan says
-? label | delta | mood | reply | goto - an answer. delta changes the doki-doki meter (like +2 or -2), mood is her reaction, reply is her answer, goto is the node number to jump to (1 = first). Only the label is required.
-# - comment
-
-If the meter reaches 0, the scene ends badly. Texts of the built-in date can be edited in the text editor (keys starting with dt_).",
+        "dbg_help_text" to "A scene is a text file. Nodes are separated by a line with ---.\n\n@bg NAME - background: street, park, cafe, aqua, fun, evening, room_her, room_home, room_her_night, room_home_night\n@mood NAME - Yuta-chan's mood: normal, happy, sad, wink\n@end win|lose - last node (just a Close button)\nLines of text - what Yuta-chan says\n? label | delta | mood | reply | goto - an answer. delta changes the doki-doki meter (like +2 or -2), mood is her reaction, reply is her answer, goto is the node number to jump to (1 = first). Only the label is required.\n# - comment\n\nIf the meter reaches 0, the scene ends badly. Texts of the built-in date can be edited in the text editor (keys starting with dt_).",
         "dt_ep1_t" to "Ask how she lived before",
         "dt_ep1_l1" to "I used to live in the darkest corner of a phone...",
         "dt_ep1_l2" to "They sent me links, and I downloaded, and downloaded, and downloaded.",
@@ -957,16 +948,7 @@ If the meter reaches 0, the scene ends badly. Texts of the built-in date can be 
         "dbg_fail" to "Не удалось загрузить картинку",
         "dev_empty" to "Сцена пустая",
         "dev_scene_end" to "Конец сцены.",
-        "dbg_help_text" to "Сцена — это текстовый файл. Узлы разделяются строкой ---.
-
-@bg ИМЯ — фон: street, park, cafe, aqua, fun, evening, room_her, room_home, room_her_night, room_home_night
-@mood ИМЯ — эмоция Юты-чан: normal, happy, sad, wink
-@end win|lose — последний узел (только кнопка «Закрыть»)
-Обычные строки — реплика Юты-чан
-? текст | дельта | эмоция | ответ | переход — вариант ответа игрока. Дельта меняет шкалу доки-доки (+2 или -2), эмоция — реакция Юты-чан, ответ — её реплика, переход — номер узла, куда идти (1 — первый). Обязателен только текст.
-# — комментарий
-
-Если шкала дойдёт до нуля, сцена закончится плохо. Тексты встроенного свидания правятся в редакторе текстов (ключи dt_…).",
+        "dbg_help_text" to "Сцена — это текстовый файл. Узлы разделяются строкой ---.\n\n@bg ИМЯ — фон: street, park, cafe, aqua, fun, evening, room_her, room_home, room_her_night, room_home_night\n@mood ИМЯ — эмоция Юты-чан: normal, happy, sad, wink\n@end win|lose — последний узел (только кнопка «Закрыть»)\nОбычные строки — реплика Юты-чан\n? текст | дельта | эмоция | ответ | переход — вариант ответа игрока. Дельта меняет шкалу доки-доки (+2 или -2), эмоция — реакция Юты-чан, ответ — её реплика, переход — номер узла, куда идти (1 — первый). Обязателен только текст.\n# — комментарий\n\nЕсли шкала дойдёт до нуля, сцена закончится плохо. Тексты встроенного свидания правятся в редакторе текстов (ключи dt_…).",
         "dt_ep1_t" to "Спросить, как ей жилось раньше",
         "dt_ep1_l1" to "Раньше я жила в самом тёмном углу телефона...",
         "dt_ep1_l2" to "Мне присылали ссылки, а я качала, качала, качала.",
@@ -3385,16 +3367,7 @@ If the meter reaches 0, the scene ends badly. Texts of the built-in date can be 
         "dbg_fail" to "Не удалось загрузить картинку",
         "dev_empty" to "Сцена пустая",
         "dev_scene_end" to "Конец сцены.",
-        "dbg_help_text" to "Сцена — это текстовый файл. Узлы разделяются строкой ---.
-
-@bg ИМЯ — фон: street, park, cafe, aqua, fun, evening, room_her, room_home, room_her_night, room_home_night
-@mood ИМЯ — эмоция Юты-чан: normal, happy, sad, wink
-@end win|lose — последний узел (только кнопка «Закрыть»)
-Обычные строки — реплика Юты-чан
-? текст | дельта | эмоция | ответ | переход — вариант ответа игрока. Дельта меняет шкалу доки-доки (+2 или -2), эмоция — реакция Юты-чан, ответ — её реплика, переход — номер узла, куда идти (1 — первый). Обязателен только текст.
-# — комментарий
-
-Если шкала дойдёт до нуля, сцена закончится плохо. Тексты встроенного свидания правятся в редакторе текстов (ключи dt_…).",
+        "dbg_help_text" to "Сцена — это текстовый файл. Узлы разделяются строкой ---.\n\n@bg ИМЯ — фон: street, park, cafe, aqua, fun, evening, room_her, room_home, room_her_night, room_home_night\n@mood ИМЯ — эмоция Юты-чан: normal, happy, sad, wink\n@end win|lose — последний узел (только кнопка «Закрыть»)\nОбычные строки — реплика Юты-чан\n? текст | дельта | эмоция | ответ | переход — вариант ответа игрока. Дельта меняет шкалу доки-доки (+2 или -2), эмоция — реакция Юты-чан, ответ — её реплика, переход — номер узла, куда идти (1 — первый). Обязателен только текст.\n# — комментарий\n\nЕсли шкала дойдёт до нуля, сцена закончится плохо. Тексты встроенного свидания правятся в редакторе текстов (ключи dt_…).",
         "dt_ep1_t" to "Спросить, как ей жилось раньше",
         "dt_ep1_l1" to "Раньше я жила в самом тёмном углу телефона...",
         "dt_ep1_l2" to "Мне присылали ссылки, а я качала, качала, качала.",
