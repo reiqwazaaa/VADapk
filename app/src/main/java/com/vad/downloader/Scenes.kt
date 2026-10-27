@@ -57,6 +57,12 @@ class SceneView(ctx: Context) : View(ctx) {
         val w = width.toFloat()
         val h = height.toFloat()
         p.style = Paint.Style.FILL
+        val customBg = if (scene in builtIn) Sprites.bitmap(context, "bg_$scene") else null
+        if (customBg != null) {
+            drawCrop(c, w, h, customBg)
+            postInvalidateOnAnimation()
+            return
+        }
         when (scene) {
             "park" -> park(c, w, h)
             "cafe" -> cafe(c, w, h)
@@ -75,6 +81,17 @@ class SceneView(ctx: Context) : View(ctx) {
     private val bmps = HashMap<Int, Bitmap?>()
 
     /** Фото комнаты, обрезанное по центру под размер экрана, с лёгким осветлением для читаемости. */
+    private val builtIn = setOf("street", "park", "cafe", "aqua", "fun", "evening")
+
+    private fun drawCrop(c: Canvas, w: Float, h: Float, bmp: Bitmap) {
+        val scale = maxOf(w / bmp.width, h / bmp.height)
+        val sw = (w / scale).toInt().coerceAtMost(bmp.width)
+        val sh = (h / scale).toInt().coerceAtMost(bmp.height)
+        val sx = (bmp.width - sw) / 2
+        val sy = (bmp.height - sh) / 2
+        c.drawBitmap(bmp, Rect(sx, sy, sx + sw, sy + sh), RectF(0f, 0f, w, h), null)
+    }
+
     private fun room(c: Canvas, w: Float, h: Float, res: Int, night: Boolean = false) {
         val custom = Sprites.bitmap(context, if (res == R.drawable.room_her) "room_her" else "room_home")
         val bmp = custom ?: bmps.getOrPut(res) {

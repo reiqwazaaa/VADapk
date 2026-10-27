@@ -43,11 +43,12 @@ object Sprites {
     private val cache = HashMap<String, Pair<Int, Bitmap>>()
 
     val rooms = listOf("room_her", "room_home")
+    val backgrounds = listOf("bg_street", "bg_park", "bg_cafe", "bg_aqua", "bg_fun", "bg_evening")
 
     fun girlSlot(outfit: Int, mood: String): String =
         "girl_" + "htp"[outfit.coerceIn(0, 2)] + "_" + (if (mood == "happy" || mood == "sad" || mood == "wink") mood else "normal")
 
-    val allSlots: List<String> = (0..2).flatMap { o -> listOf("normal", "happy", "sad", "wink").map { girlSlot(o, it) } } + rooms
+    val allSlots: List<String> = (0..2).flatMap { o -> listOf("normal", "happy", "sad", "wink").map { girlSlot(o, it) } } + rooms + backgrounds + listOf("cat_icon")
 
     private fun dir(ctx: Context) = File(ctx.filesDir, "sprites").apply { mkdirs() }
 

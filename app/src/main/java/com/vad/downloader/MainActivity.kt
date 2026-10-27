@@ -417,10 +417,12 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_VERTICAL
         }
         val catButton = ImageView(this).apply {
-            setImageResource(R.drawable.ic_cat)
+            val customCat = Sprites.drawable(this@MainActivity, "cat_icon")
+            if (customCat != null) setImageDrawable(customCat) else setImageResource(R.drawable.ic_cat)
             scaleType = ImageView.ScaleType.FIT_CENTER
             setPadding(dp(9), dp(9), dp(9), dp(9))
-            imageTintList = ColorStateList.valueOf(if (kawaii) kawaiiText else 0xFFFFFFFF.toInt())
+            imageTintList = if (customCat != null) null
+            else ColorStateList.valueOf(if (kawaii) kawaiiText else 0xFFFFFFFF.toInt())
             background = circleBackground()
             contentDescription = "cat"
             layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(10) }
