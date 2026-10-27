@@ -964,6 +964,14 @@ class MainActivity : Activity() {
             data?.data?.let { dev.onSpritePicked(it) }
             return
         }
+        if (requestCode == 45 && resultCode == RESULT_OK) {
+            data?.data?.let { dev.onCreated(it) }
+            return
+        }
+        if (requestCode == 46 && resultCode == RESULT_OK) {
+            data?.data?.let { dev.onOpened(it) }
+            return
+        }
         if (requestCode == reqPickCookies && resultCode == RESULT_OK) {
             val uri = data?.data ?: return
             try {

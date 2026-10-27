@@ -86,6 +86,22 @@ object Sprites {
         false
     }
 
+    fun fileOf(ctx: Context, slot: String) = File(dir(ctx), "$slot.png")
+
+    fun setBytes(ctx: Context, slot: String, data: ByteArray): Boolean = try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || bounds.outWidth > 4096 || bounds.outHeight > 4096) false
+        else {
+            File(dir(ctx), "$slot.png").writeBytes(data)
+            known = null
+            version++
+            true
+        }
+    } catch (_: Throwable) {
+        false
+    }
+
     fun reset(ctx: Context, slot: String) {
         File(dir(ctx), "$slot.png").delete()
         known = null
@@ -310,7 +326,7 @@ class DevTools(
     }
 
     private fun menu() {
-        val items = arrayOf(t("dbg_unlock"), t("dbg_reset"), t("dbg_texts"), t("dbg_texts_reset"), t("dbg_scenes"), t("dbg_sprites"), t("dbg_exit"))
+        val items = arrayOf(t("dbg_unlock"), t("dbg_reset"), t("dbg_texts"), t("dbg_texts_reset"), t("dbg_scenes"), t("dbg_sprites"), t("ed_pack_export"), t("ed_pack_import"), t("dbg_exit"))
         AlertDialog.Builder(act)
             .setTitle(t("dbg_btn"))
             .setItems(items) { _, w ->
@@ -329,6 +345,8 @@ class DevTools(
                     3 -> { Strings.clearOverrides(act); toast(t("dbg_done")) }
                     4 -> scenes()
                     5 -> sprites()
+                    6 -> packExportDialog()
+                    7 -> packImport()
                     else -> { prefs.edit().putBoolean("debug", false).apply(); toast(t("dbg_done")) }
                 }
             }
@@ -342,8 +360,19 @@ class DevTools(
         val root = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), 0) }
         val search = EditText(act).apply { setText("dt_"); setSingleLine(true); hint = t("dbg_search") }
         val list = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL }
+        val cats = listOf("ed_c1" to "dt_s0", "ed_c2" to "dt_a_", "ed_c3" to "dt_ev", "ed_c4" to "dt_tk", "ed_c5" to "dt_eve",
+            "ed_c6" to "dt_g", "ed_c7" to "dt_h", "ed_c8" to "dt_ep", "ed_c9" to "dt_so", "ed_c10" to "dt_end")
+        root.addView(android.widget.HorizontalScrollView(act).apply {
+            addView(LinearLayout(act).apply {
+                orientation = LinearLayout.HORIZONTAL
+                for ((label, prefix) in cats) addView(Button(act).apply {
+                    text = t(label); textSize = 11f; isAllCaps = false
+                    setOnClickListener { search.setText(prefix) }
+                })
+            })
+        })
         root.addView(search)
-        root.addView(ScrollView(act).apply { addView(list) }, LinearLayout.LayoutParams(-1, dp(380)))
+        root.addView(ScrollView(act).apply { addView(list) }, LinearLayout.LayoutParams(-1, dp(340)))
         fun fill() {
             list.removeAllViews()
             val q = search.text.toString().trim()
@@ -407,14 +436,15 @@ The end. Thank you!
 
     private fun scenes() {
         val files = scenesDir().listFiles()?.filter { it.extension == "txt" }?.sortedBy { it.name } ?: emptyList()
-        val items = (listOf("+ " + t("dbg_new")) + files.map { it.nameWithoutExtension } + listOf("? " + t("dbg_help"))).toTypedArray()
+        val items = (listOf("+ " + t("dbg_new"), "⇩ " + t("ed_import_scene")) + files.map { it.nameWithoutExtension } + listOf("? " + t("dbg_help"))).toTypedArray()
         AlertDialog.Builder(act)
             .setTitle(t("dbg_scenes"))
             .setItems(items) { _, w ->
                 when {
                     w == 0 -> newScene()
+                    w == 1 -> importScene()
                     w == items.size - 1 -> help()
-                    else -> editScene(files[w - 1])
+                    else -> sceneHub(files[w - 2])
                 }
             }
             .setNegativeButton(t("back"), null)
@@ -428,7 +458,7 @@ The end. Thank you!
                 val n = name.text.toString().trim().replace(Regex("[^A-Za-z0-9_\\-\\u0400-\\u04FF]"), "_").ifEmpty { "scene" }
                 val f = File(scenesDir(), "$n.txt")
                 if (!f.exists()) f.writeText(template)
-                editScene(f)
+                sceneHub(f)
             }
             .setNegativeButton(t("cancel"), null).show()
     }
@@ -459,6 +489,7 @@ The end. Thank you!
         )
         add(t("save")) { f.writeText(edit.text.toString()); toast(t("dbg_done")) }
         add(t("dbg_play")) { f.writeText(edit.text.toString()); play(edit.text.toString()) }
+        add(t("ed_visual")) { f.writeText(edit.text.toString()); dlg.dismiss(); visual(f) }
         add("?") { help() }
         add(t("dbg_delete")) { f.delete(); dlg.dismiss() }
         add(t("date_close")) { f.writeText(edit.text.toString()); dlg.dismiss() }
@@ -471,6 +502,174 @@ The end. Thank you!
         }
         dlg.setContentView(root)
         dlg.show()
+    }
+
+    private fun visual(f: File) {
+        SceneEditor(act, t, f, { play(it) }, { editScene(f) }).show()
+    }
+
+    private fun sceneHub(f: File) {
+        AlertDialog.Builder(act)
+            .setTitle(f.nameWithoutExtension)
+            .setItems(arrayOf(t("ed_visual"), t("ed_text"), t("dbg_play"), t("ed_export"), t("dbg_delete"))) { _, w ->
+                when (w) {
+                    0 -> visual(f)
+                    1 -> editScene(f)
+                    2 -> play(f.readText())
+                    3 -> exportScene(f)
+                    else -> { f.delete(); toast(t("dbg_done")) }
+                }
+            }
+            .setNegativeButton(t("back"), null)
+            .show()
+    }
+
+    // ---------------------------------------------------------------- экспорт и импорт
+
+    private var pendingExport: (() -> ByteArray)? = null
+    private var pendingImport: ((Uri, ByteArray) -> Unit)? = null
+
+    private fun createDoc(name: String, mime: String, gen: () -> ByteArray) {
+        pendingExport = gen
+        act.startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = mime
+            putExtra(Intent.EXTRA_TITLE, name)
+        }, 45)
+    }
+
+    private fun openDoc(handler: (Uri, ByteArray) -> Unit) {
+        pendingImport = handler
+        act.startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }, 46)
+    }
+
+    fun onCreated(uri: Uri) {
+        val gen = pendingExport ?: return
+        pendingExport = null
+        try {
+            act.contentResolver.openOutputStream(uri)?.use { it.write(gen()) }
+            toast(t("ed_exported"))
+        } catch (_: Throwable) {
+            toast(t("dbg_fail"))
+        }
+    }
+
+    fun onOpened(uri: Uri) {
+        val h = pendingImport ?: return
+        pendingImport = null
+        try {
+            val data = act.contentResolver.openInputStream(uri)?.use { readLimited(it, 40 * 1024 * 1024) }
+            if (data == null) toast(t("ed_bad")) else h(uri, data)
+        } catch (_: Throwable) {
+            toast(t("ed_bad"))
+        }
+        rebuild()
+    }
+
+    private fun readLimited(input: java.io.InputStream, limit: Int): ByteArray? {
+        val out = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(16 * 1024)
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            out.write(buf, 0, n)
+            if (out.size() > limit) return null
+        }
+        return out.toByteArray()
+    }
+
+    private fun exportScene(f: File) = createDoc(f.name, "text/plain") { f.readBytes() }
+
+    private fun uniqueScene(base: String): File {
+        var f = File(scenesDir(), "$base.txt")
+        var i = 2
+        while (f.exists()) f = File(scenesDir(), "${base}_${i++}.txt")
+        return f
+    }
+
+    private fun importScene() = openDoc { uri, data ->
+        var name = "imported"
+        act.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) name = it.getString(0).orEmpty().substringBeforeLast('.')
+        }
+        name = name.replace(Regex("[^\\p{L}\\p{N}_\\-]"), "_").take(40).ifEmpty { "imported" }
+        val text = String(data, Charsets.UTF_8)
+        if (ScriptPlayer.parse(text).isEmpty()) toast(t("ed_bad")) else {
+            uniqueScene(name).writeText(text)
+            toast(String.format(t("ed_imported"), name))
+        }
+    }
+
+    private fun packExportDialog() {
+        val names = arrayOf(t("ed_part_skins"), t("ed_part_scenes"), t("ed_part_texts"))
+        val on = booleanArrayOf(true, true, true)
+        AlertDialog.Builder(act)
+            .setTitle(t("ed_pack_export"))
+            .setMultiChoiceItems(names, on) { _, i, c -> on[i] = c }
+            .setPositiveButton("OK") { _, _ ->
+                val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.US).format(java.util.Date())
+                createDoc("vad-pack-$stamp.zip", "application/zip") { buildPack(on[0], on[1], on[2]) }
+            }
+            .setNegativeButton(t("cancel"), null)
+            .show()
+    }
+
+    private fun buildPack(skins: Boolean, scenes: Boolean, texts: Boolean): ByteArray {
+        val bos = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(bos).use { z ->
+            fun put(name: String, data: ByteArray) {
+                z.putNextEntry(java.util.zip.ZipEntry(name)); z.write(data); z.closeEntry()
+            }
+            put("manifest.json", "{\"app\":\"vad\",\"version\":1}".toByteArray())
+            if (skins) for (slot in Sprites.allSlots) if (Sprites.has(act, slot)) put("sprites/$slot.png", Sprites.fileOf(act, slot).readBytes())
+            if (scenes) scenesDir().listFiles()?.filter { it.extension == "txt" }?.forEach { put("scenes/${it.name}", it.readBytes()) }
+            if (texts) {
+                val o = org.json.JSONObject()
+                for ((k, v) in Strings.overridesMap()) o.put(k, v)
+                put("texts.json", o.toString().toByteArray())
+            }
+        }
+        return bos.toByteArray()
+    }
+
+    private fun packImport() = openDoc { _, data ->
+        var sp = 0
+        var sc = 0
+        var tx = 0
+        var count = 0
+        val sceneRe = Regex("scenes/([\\p{L}\\p{N}_\\-]{1,40})\\.txt")
+        val spriteRe = Regex("sprites/([A-Za-z0-9_]+)\\.png")
+        java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(data)).use { z ->
+            while (true) {
+                val e = z.nextEntry ?: break
+                if (e.isDirectory) continue
+                if (++count > 300) break
+                val name = e.name
+                val body = readLimited(z, 20 * 1024 * 1024) ?: continue
+                val sm = spriteRe.matchEntire(name)
+                val cm = sceneRe.matchEntire(name)
+                when {
+                    sm != null && sm.groupValues[1] in Sprites.allSlots -> if (Sprites.setBytes(act, sm.groupValues[1], body)) sp++
+                    cm != null -> {
+                        val text = String(body, Charsets.UTF_8)
+                        if (text.length < 500_000 && ScriptPlayer.parse(text).isNotEmpty()) {
+                            uniqueScene(cm.groupValues[1]).writeText(text); sc++
+                        }
+                    }
+                    name == "texts.json" -> try {
+                        val o = org.json.JSONObject(String(body, Charsets.UTF_8))
+                        val m = HashMap<String, String>()
+                        for (k in o.keys()) if (k.length < 80) m[k] = o.getString(k).take(2000)
+                        Strings.mergeOverrides(act, m); tx = m.size
+                    } catch (_: Throwable) {
+                    }
+                }
+            }
+        }
+        toast(String.format(t("ed_imported"), "$sp / $sc / $tx"))
     }
 
     // ---------------------------------------------------------------- спрайты
