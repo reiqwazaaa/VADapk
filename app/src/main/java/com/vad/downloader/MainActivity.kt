@@ -739,10 +739,10 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun pasteFromClipboard() {
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val text = cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()?.trim().orEmpty()
-        if (text.isEmpty()) toast(t("clip_empty")) else urlInput.setText(text)
+    private fun pasteFromClipboard(tries: Int = 0) {
+        val text = readClip().first.trim()
+        if (text.isNotEmpty()) { urlInput.setText(text); return }
+        if (tries < 2) urlInput.postDelayed({ pasteFromClipboard(tries + 1) }, 200) else toast(t("clip_empty"))
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
@@ -964,6 +964,10 @@ class MainActivity : Activity() {
             data?.data?.let { dev.onSpritePicked(it) }
             return
         }
+        if (requestCode == 47 && resultCode == RESULT_OK) {
+            data?.data?.let { dev.games.onImagePicked(it) }
+            return
+        }
         if (requestCode == 45 && resultCode == RESULT_OK) {
             data?.data?.let { dev.onCreated(it) }
             return
@@ -1074,24 +1078,47 @@ class MainActivity : Activity() {
 
     private var clipDialog: AlertDialog? = null
 
+    private fun readClip(): Pair<String, Long> {
+        return try {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = cm.primaryClip
+            val text = if (clip != null && clip.itemCount > 0) clip.getItemAt(0).coerceToText(this)?.toString().orEmpty() else ""
+            val ts = try { cm.primaryClipDescription?.timestamp ?: 0L } catch (_: Throwable) { 0L }
+            Pair(text, ts)
+        } catch (_: Throwable) {
+            Pair("", 0L)
+        }
+    }
+
+    /** Предложение вставить ссылку: на возврат в приложение и на получение фокуса, с повторами (буфер читается только когда окно в фокусе). */
+    private fun checkClip(tries: Int = 0) {
+        if (!::urlInput.isInitialized || isFinishing) return
+        if (!prefs.getBoolean("clip_watch", true) || busy || clipDialog?.isShowing == true || gateOpen) return
+        val (text, ts) = readClip()
+        val url = Regex("https?://\\S+").find(text)?.value
+        if (url == null) {
+            if (tries < 3 && hasWindowFocus()) urlInput.postDelayed({ checkClip(tries + 1) }, 300)
+            return
+        }
+        val key = if (ts != 0L) "ts$ts" else url
+        if (key == prefs.getString("last_clip", "")) return
+        if (urlInput.text.toString().trim() == url) return
+        prefs.edit().putString("last_clip", key).apply()
+        clipDialog = AlertDialog.Builder(this)
+            .setMessage(t("clip_found") + "\n\n" + url.take(200))
+            .setPositiveButton(t("paste")) { _, _ -> urlInput.setText(url) }
+            .setNegativeButton(t("cancel"), null)
+            .show()
+    }
+
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus || !::urlInput.isInitialized) return
-        if (!prefs.getBoolean("clip_watch", true) || busy || clipDialog?.isShowing == true) return
-        if (urlInput.text.isNotBlank()) return
-        try {
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val text = cm.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
-            val url = Regex("https?://\\S+").find(text)?.value ?: return
-            if (url == prefs.getString("last_clip", "")) return
-            prefs.edit().putString("last_clip", url).apply()
-            clipDialog = AlertDialog.Builder(this)
-                .setMessage(t("clip_found") + "\n\n" + url.take(200))
-                .setPositiveButton(t("paste")) { _, _ -> urlInput.setText(url) }
-                .setNegativeButton(t("cancel"), null)
-                .show()
-        } catch (_: Throwable) {
-        }
+        if (hasFocus && ::urlInput.isInitialized) urlInput.postDelayed({ checkClip() }, 250)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::urlInput.isInitialized) urlInput.postDelayed({ checkClip() }, 400)
     }
 
     // ------------------------------------------------------------ продолжение прерванной загрузки
@@ -1409,11 +1436,20 @@ class MainActivity : Activity() {
         }
     }
 
-    /** Случайная мини-игра: победа запускает загрузку. */
+    private var gateOpen = false
+
+    /** Случайная мини-игра (все игры равновероятны): победа запускает загрузку. */
     private fun playGate(onWin: () -> Unit) {
+        val ids = GamePacks.ids(this)
+        if (ids.isEmpty()) { onWin(); return }
+        val kind = ids.random()
         val dlg = Dialog(this, android.R.style.Theme_Material_Light_NoActionBar_Fullscreen)
         dlg.setCancelable(false)
-        val kind = listOf("snake", "maze", "tank", "run").random()
+        gateOpen = true
+        var host: GameHost? = null
+        dlg.setOnDismissListener { gateOpen = false; host?.destroy() }
+        val errView = TextView(this).apply { setTextColor(0xFFC62828.toInt()); textSize = 12f }
+        var failures = 0
         val onFinish: (Boolean) -> Unit = { win ->
             dlg.dismiss()
             if (win) {
@@ -1429,11 +1465,8 @@ class MainActivity : Activity() {
                     .show()
             }
         }
-        val game: GameView = when (kind) {
-            "snake" -> SnakeGame(this, onFinish)
-            "maze" -> MazeGame(this, onFinish)
-            "tank" -> TankGame(this, onFinish)
-            else -> PlatformerGame(this, onFinish)
+        host = GameHost(this, GamePacks.html(this, kind), onFinish) { msg ->
+            if (++failures == 1) errView.text = "JS: $msg"
         }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1448,11 +1481,12 @@ class MainActivity : Activity() {
             setTextColor(0xFF4B2E83.toInt())
         })
         box.addView(TextView(this).apply {
-            text = t("g_$kind")
+            text = GamePacks.hint(this@MainActivity, kind)
             setTextColor(0xFF6A4A9A.toInt())
             setPadding(0, dp(4), 0, dp(8))
         })
-        box.addView(game, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        box.addView(host, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        box.addView(errView)
         box.addView(button(t("cancel")) { dlg.dismiss() })
         dlg.setContentView(box)
         dlg.show()

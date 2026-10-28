@@ -298,6 +298,7 @@ class DevTools(
     private val rebuild: () -> Unit
 ) {
     private var pendingSlot: String? = null
+    val games by lazy { GameDev(act, t, button, this) }
     private fun dp(v: Int) = (v * act.resources.displayMetrics.density).toInt()
     private fun toast(s: String) = Toast.makeText(act, s, Toast.LENGTH_SHORT).show()
 
@@ -326,7 +327,7 @@ class DevTools(
     }
 
     private fun menu() {
-        val items = arrayOf(t("dbg_unlock"), t("dbg_reset"), t("dbg_texts"), t("dbg_texts_reset"), t("dbg_scenes"), t("dbg_sprites"), t("ed_pack_export"), t("ed_pack_import"), t("dbg_exit"))
+        val items = arrayOf(t("dbg_unlock"), t("dbg_reset"), t("dbg_texts"), t("dbg_texts_reset"), t("dbg_scenes"), t("dbg_sprites"), t("gm_title"), t("ed_pack_export"), t("ed_pack_import"), t("dbg_exit"))
         AlertDialog.Builder(act)
             .setTitle(t("dbg_btn"))
             .setItems(items) { _, w ->
@@ -345,8 +346,9 @@ class DevTools(
                     3 -> { Strings.clearOverrides(act); toast(t("dbg_done")) }
                     4 -> scenes()
                     5 -> sprites()
-                    6 -> packExportDialog()
-                    7 -> packImport()
+                    6 -> games.menu()
+                    7 -> packExportDialog()
+                    8 -> packImport()
                     else -> { prefs.edit().putBoolean("debug", false).apply(); toast(t("dbg_done")) }
                 }
             }
@@ -528,6 +530,9 @@ The end. Thank you!
 
     private var pendingExport: (() -> ByteArray)? = null
     private var pendingImport: ((Uri, ByteArray) -> Unit)? = null
+
+    fun createDocPublic(name: String, mime: String, gen: () -> ByteArray) = createDoc(name, mime, gen)
+    fun openDocPublic(handler: (Uri, ByteArray) -> Unit) = openDoc(handler)
 
     private fun createDoc(name: String, mime: String, gen: () -> ByteArray) {
         pendingExport = gen
