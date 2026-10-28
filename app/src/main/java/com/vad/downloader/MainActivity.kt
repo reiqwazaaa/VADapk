@@ -102,7 +102,26 @@ class MainActivity : Activity() {
     private lateinit var historyList: LinearLayout
     private val audioLabels = listOf("MP3 (best)", "MP3 320k", "MP3 192k", "MP3 128k", "M4A (AAC)", "Opus", "FLAC", "WAV")
     private val audioCodes = listOf("mp3:0", "mp3:320K", "mp3:192K", "mp3:128K", "m4a", "opus", "flac", "wav")
-    private class DlSpec(val kind: String, val fmt: String, val afmt: String)
+    private class DlSpec(val kind: String, val fmt: String, val afmt: String, val subs: String = "")
+    private val subLabelKeys = listOf("sub_none", "sub_embed", "sub_file")
+    private val subCodes = listOf("", "embed", "file")
+    private lateinit var subsSpinner: Spinner
+    private lateinit var lockedButtons: List<Button>
+
+    // очередь загрузок: 0 ждёт, 1 качается, 2 готово, 3 ошибка, 4 отменено
+    private class QItem(val id: Int, val urls: List<String>, val playlist: Boolean, val spec: DlSpec) {
+        var state = 0
+        var title = ""
+        var info = ""
+        var progress = 0
+        var saved = 0
+    }
+    private val queue = ArrayList<QItem>()
+    private var queueSeq = 0
+    private var queuePaused = false
+    private lateinit var queueList: LinearLayout
+    private var queueBtn: Button? = null
+    private var lastQueueUi = 0L
     private class Saved(val name: String, val uri: Uri, val mime: String)
 
     private class Palette(val key: String, val need: Int, val bg: IntArray, val btn: IntArray, val accent: Int)
@@ -122,12 +141,12 @@ class MainActivity : Activity() {
     private val kawaiiText: Int get() = if (night) 0xFFEBDDFF.toInt() else 0xFF6A2C6B.toInt()
     private val accent: Int get() = if (night) 0xFFB388FF.toInt() else palette.accent
     private val logTextColor: Int get() = if (night) 0xFFD9C9F5.toInt() else 0xFF5A3A78.toInt()
-    private val panelColor: Int get() = if (night) 0x33FFFFFF else 0x99FFFFFF.toInt()
+    private val panelColor: Int get() = if (night) 0x1FFFFFFF else 0x99FFFFFF.toInt()
     private val bgColors: IntArray
-        get() = if (night) intArrayOf(0xFF2B1B4E.toInt(), 0xFF45307A.toInt(), 0xFF1E3A5F.toInt())
+        get() = if (night) intArrayOf(0xFF07050F.toInt(), 0xFF110B22.toInt(), 0xFF060D1A.toInt())
         else palette.bg
     private val btnColors: IntArray
-        get() = if (night) intArrayOf(0xFF7A4DB8.toInt(), 0xFF9B6FD6.toInt())
+        get() = if (night) intArrayOf(0xFF3A2468.toInt(), 0xFF4D3188.toInt())
         else palette.btn
 
     @Volatile private var engineReady = false
@@ -530,6 +549,19 @@ class MainActivity : Activity() {
             }
         }
         main.addView(audioSpinner)
+        main.addView(TextView(this).apply { text = t("sub_label"); tintText(this) })
+        subsSpinner = Spinner(this).apply {
+            adapter = styledAdapter(subLabelKeys.map { t(it) })
+            setSelection(prefs.getInt("subs_pos", 0).coerceIn(0, subCodes.size - 1))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    prefs.edit().putInt("subs_pos", pos).apply()
+                }
+
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+        }
+        main.addView(subsSpinner)
 
         // --- кнопки действий ---
         val bAuto = button(t("dl_auto")) { startAuto() }
@@ -568,11 +600,18 @@ class MainActivity : Activity() {
         toolsRow.addView(bProxy)
         toolsRow.addView(bCookies)
         main.addView(toolsRow)
-        main.addView(button(t("history_btn")) { tab = 3; refreshHistory(); applyTabFn?.invoke() })
+        val histRow = FitRow(this)
+        histRow.addView(button(t("history_btn")) { tab = 3; refreshHistory(); applyTabFn?.invoke() })
+        queueBtn = button(t("q_btn")) { tab = 4; refreshQueue(); applyTabFn?.invoke() }
+        histRow.addView(queueBtn)
+        main.addView(histRow)
+        updateQueueButton()
 
 
-        actionButtons = listOf(bAuto, bPick, bMp3, bUpdate)
-        actionButtons.forEach { it.isEnabled = engineReady && !busy }
+        actionButtons = listOf(bAuto, bMp3)          // во время загрузки они ставят в очередь
+        lockedButtons = listOf(bPick, bUpdate)       // эти работают только когда ничего не качается
+        actionButtons.forEach { it.isEnabled = engineReady }
+        lockedButtons.forEach { it.isEnabled = engineReady && !busy }
         cancelButton.isEnabled = busy
 
         // --- вкладка «Лог» (текст всегда слева направо) ---
@@ -617,36 +656,25 @@ class MainActivity : Activity() {
             setTypeface(typeface, Typeface.BOLD)
             tintText(this)
         })
-        val langRow2 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        langRow2.addView(TextView(this).apply {
-            text = t("lang_label") + ": "
-            setPadding(0, 0, dp(8), 0)
-            tintText(this)
-        })
         val langList = Strings.available(prefs.getBoolean("kawaii_unlocked", false))
-        langRow2.addView(Spinner(this).apply {
-            adapter = styledAdapter(langList.map { it.name })
-            setSelection(langList.indexOfFirst { it.code == Strings.code }.coerceAtLeast(0))
-            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+        val curLang = langList.firstOrNull { it.code == Strings.code }?.name ?: "English"
+        settings.addView(button("\uD83C\uDF10  " + t("lang_label") + ": " + curLang + "  \u25BE") {
+            AlertDialog.Builder(this)
+                .setTitle(t("lang_label"))
+                .setItems(langList.map { it.name }.toTypedArray()) { _, pos ->
                     val code = langList[pos].code
                     if (code != Strings.code) {
                         Strings.set(this@MainActivity, code)
                         Handler(Looper.getMainLooper()).post { buildUi() }
                     }
                 }
-
-                override fun onNothingSelected(p: AdapterView<*>?) {}
-            }
+                .setNegativeButton(t("cancel"), null)
+                .show()
         })
-        settings.addView(langRow2)
-        pathText = TextView(this).apply { tintText(this) }
+        pathText = TextView(this).apply { tintText(this); setPadding(dp(4), dp(8), dp(4), dp(2)) }
         settings.addView(pathText)
         val pathRow = FitRow(this)
-        pathRow.addView(button(t("pick_folder")) { pickFolder() })
+        pathRow.addView(button("\uD83D\uDCC1  " + t("pick_folder")) { pickFolder() })
         pathRow.addView(button(t("default_folder")) {
             prefs.edit().remove("tree_uri").apply()
             refreshPath()
@@ -695,18 +723,40 @@ class MainActivity : Activity() {
         histButtons.addView(button(t("back")) { tab = 0; applyTabFn?.invoke() })
         histButtons.addView(button(t("hist_clear")) { saveHistory(JSONArray()); refreshHistory() })
         historyPane.addView(histButtons)
+        queueList = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val queuePane = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        queuePane.addView(TextView(this).apply {
+            text = t("q_title")
+            textSize = 20f
+            setTypeface(typeface, Typeface.BOLD)
+            tintText(this)
+        })
+        queuePane.addView(ScrollView(this).apply {
+            addView(queueList)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        })
+        val queueButtons = FitRow(this)
+        queueButtons.addView(button(t("back")) { tab = 0; applyTabFn?.invoke() })
+        queueButtons.addView(button(t("q_clear_done")) {
+            queue.removeAll { it.state >= 2 }
+            refreshQueue(); updateQueueButton()
+        })
+        queueButtons.addView(button(t("q_resume")) { queuePaused = false; startNextInQueue(); refreshQueue() })
+        queuePane.addView(queueButtons)
         val content = FrameLayout(this)
         val matchBoth = ViewGroup.LayoutParams.MATCH_PARENT
         content.addView(mainScroll, FrameLayout.LayoutParams(matchBoth, matchBoth))
         content.addView(settingsScroll, FrameLayout.LayoutParams(matchBoth, matchBoth))
         content.addView(logPane, FrameLayout.LayoutParams(matchBoth, matchBoth))
         content.addView(historyPane, FrameLayout.LayoutParams(matchBoth, matchBoth))
+        content.addView(queuePane, FrameLayout.LayoutParams(matchBoth, matchBoth))
 
         applyTabFn = {
             mainScroll.visibility = if (tab == 0) View.VISIBLE else View.GONE
             settingsScroll.visibility = if (tab == 2) View.VISIBLE else View.GONE
             logPane.visibility = if (tab == 1) View.VISIBLE else View.GONE
             historyPane.visibility = if (tab == 3) View.VISIBLE else View.GONE
+            queuePane.visibility = if (tab == 4) View.VISIBLE else View.GONE
             if (tab == 1) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
         }
         root.addView(content, LinearLayout.LayoutParams(matchBoth, 0, 1f))
@@ -832,7 +882,8 @@ class MainActivity : Activity() {
 
     private fun setBusy(b: Boolean) = runOnUiThread {
         busy = b
-        actionButtons.forEach { it.isEnabled = engineReady && !b }
+        actionButtons.forEach { it.isEnabled = engineReady }
+        lockedButtons.forEach { it.isEnabled = engineReady && !b }
         cancelButton.isEnabled = b
         if (!b) progressBar.progress = 0
     }
@@ -1045,7 +1096,7 @@ class MainActivity : Activity() {
 
     private fun startAuto() {
         val urls = currentUrls() ?: return
-        val spec = DlSpec("video", qualityFormat(), "")
+        val spec = DlSpec("video", qualityFormat(), "", subCode())
         runDownload(urls, playlistBox.isChecked, spec)
     }
 
@@ -1055,10 +1106,25 @@ class MainActivity : Activity() {
         runDownload(urls, playlistBox.isChecked, spec)
     }
 
+    private fun subCode(): String = subCodes[subsSpinner.selectedItemPosition.coerceIn(0, subCodes.size - 1)]
+
+    /** Язык субтитров = язык приложения (для «няшного русского» — русский). */
+    private fun subLang(): String = when (val c = Strings.code) {
+        "rk" -> "ru"
+        "in" -> "id"
+        else -> c.substringBefore('-')
+    }
+
     private fun applySpec(spec: DlSpec, req: YoutubeDLRequest, embed: Boolean) {
         if (spec.kind == "video") {
             req.addOption("-f", spec.fmt)
             req.addOption("--merge-output-format", "mp4")
+            if (embed && spec.subs.isNotEmpty()) {
+                req.addOption("--write-subs")
+                req.addOption("--write-auto-subs")
+                req.addOption("--sub-langs", subLang() + ".*")
+                if (spec.subs == "embed") req.addOption("--embed-subs") else req.addOption("--convert-subs", "srt")
+            }
         } else {
             val codec = spec.afmt.substringBefore(":")
             val q = spec.afmt.substringAfter(":", "")
@@ -1130,6 +1196,7 @@ class MainActivity : Activity() {
         o.put("kind", spec.kind)
         o.put("fmt", spec.fmt)
         o.put("afmt", spec.afmt)
+        o.put("subs", spec.subs)
         prefs.edit().putString("pending", o.toString()).apply()
     }
 
@@ -1140,7 +1207,7 @@ class MainActivity : Activity() {
             val o = JSONObject(raw)
             val arr = o.getJSONArray("urls")
             val urls = (0 until arr.length()).map { arr.getString(it) }
-            val spec = DlSpec(o.getString("kind"), o.optString("fmt"), o.optString("afmt"))
+            val spec = DlSpec(o.getString("kind"), o.optString("fmt"), o.optString("afmt"), o.optString("subs"))
             val playlist = o.optBoolean("playlist")
             AlertDialog.Builder(this)
                 .setMessage(t("resume_q") + "\n\n" + urls.first().take(120) + if (urls.size > 1) "\n(+${urls.size - 1})" else "")
@@ -1271,6 +1338,7 @@ class MainActivity : Activity() {
     private class AFormat(val label: String, val id: String)
 
     private fun startPickFormat() {
+        if (busy) { toast(t("q_pick_busy")); return }
         val url = currentUrl() ?: return
         val playlist = playlistBox.isChecked
         setBusy(true)
@@ -1357,7 +1425,7 @@ class MainActivity : Activity() {
     }
 
     private fun downloadFormat(url: String, playlist: Boolean, fmt: String) {
-        runDownload(listOf(url), playlist, DlSpec("video", fmt, ""))
+        runDownload(listOf(url), playlist, DlSpec("video", fmt, "", subCode()))
     }
 
     private fun cancelDownload() {
@@ -1428,11 +1496,110 @@ class MainActivity : Activity() {
     }
 
     private fun runDownload(urls: List<String>, playlist: Boolean, spec: DlSpec) {
-        if (!engineReady || busy) return
+        if (!engineReady) return
         if (prefs.getBoolean("game_gate", false)) {
-            playGate { runDownloadNow(urls, playlist, spec, false) }
+            playGate { enqueue(urls, playlist, spec) }
         } else {
-            runDownloadNow(urls, playlist, spec, false)
+            enqueue(urls, playlist, spec)
+        }
+    }
+
+    // ------------------------------------------------------------ очередь загрузок
+
+    private fun enqueue(urls: List<String>, playlist: Boolean, spec: DlSpec) {
+        val item = QItem(++queueSeq, urls, playlist, spec)
+        queue.add(item)
+        val waiting = queue.count { it.state == 0 }
+        if (busy || queue.any { it.state == 1 }) toast(f("q_added", waiting))
+        queuePaused = false
+        updateQueueButton(); refreshQueue()
+        startNextInQueue()
+    }
+
+    private fun startNextInQueue() {
+        if (busy || queuePaused || !engineReady) return
+        val next = queue.firstOrNull { it.state == 0 } ?: return
+        runDownloadNow(next.urls, next.playlist, next.spec, false, next)
+    }
+
+    private fun updateQueueButton() {
+        val n = queue.count { it.state <= 1 }
+        queueBtn?.text = if (n > 0) t("q_btn") + " ($n)" else t("q_btn")
+    }
+
+    private fun stateGlyph(st: Int) = when (st) { 0 -> "\u23F3"; 1 -> "\u25B6"; 2 -> "\u2705"; 3 -> "\u274C"; else -> "\u23F8" }
+    private fun stateName(st: Int) = t(when (st) { 0 -> "q_st_wait"; 1 -> "q_st_active"; 2 -> "q_st_done"; 3 -> "q_st_err"; else -> "q_st_cancel" })
+
+    private fun specLabel(spec: DlSpec): String {
+        val base = if (spec.kind == "audio") t("q_audio") + " " + audioLabels.getOrElse(audioCodes.indexOf(spec.afmt).coerceAtLeast(0)) { "" }
+        else t("q_video") + when {
+            spec.fmt.contains("1080") -> " 1080p"
+            spec.fmt.contains("720") -> " 720p"
+            else -> ""
+        }
+        return base + when (spec.subs) { "embed" -> " \u00B7 CC" ; "file" -> " \u00B7 SRT"; else -> "" }
+    }
+
+    /** Экран очереди: карточки с состоянием, прогрессом и кнопками. */
+    private fun refreshQueue() {
+        if (!::queueList.isInitialized) return
+        runOnUiThread {
+            queueList.removeAllViews()
+            updateQueueButton()
+            if (queue.isEmpty()) {
+                queueList.addView(TextView(this).apply { text = t("q_empty"); setPadding(0, dp(12), 0, 0); tintText(this) })
+                return@runOnUiThread
+            }
+            if (queuePaused && queue.any { it.state == 0 }) {
+                queueList.addView(TextView(this).apply {
+                    text = "\u23F8 " + t("q_paused"); setPadding(dp(4), dp(8), dp(4), dp(8)); setTypeface(typeface, Typeface.BOLD); tintText(this)
+                })
+            }
+            for (item in queue) {
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(14), dp(10), dp(14), dp(10))
+                    background = GradientDrawable().apply {
+                        cornerRadius = dp(18).toFloat()
+                        setColor(if (kawaii) panelColor else 0x14000000)
+                        if (item.state == 1) setStroke(dp(2), if (kawaii) accent else 0xFF4A90D9.toInt())
+                    }
+                    layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(0, dp(5), 0, dp(5)) }
+                }
+                val name = item.title.ifEmpty { item.urls.first().removePrefix("https://").removePrefix("http://").removePrefix("www.") }
+                card.addView(TextView(this).apply {
+                    text = stateGlyph(item.state) + "  " + name.take(90) + if (item.urls.size > 1) "  (+${item.urls.size - 1})" else ""
+                    setTypeface(typeface, Typeface.BOLD)
+                    textSize = 15f
+                    maxLines = 2
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    textDirection = View.TEXT_DIRECTION_LTR
+                    tintText(this)
+                })
+                card.addView(TextView(this).apply {
+                    text = specLabel(item.spec) + "  \u00B7  " + stateName(item.state)
+                    textSize = 12.5f
+                    tintText(this)
+                    alpha = 0.85f
+                })
+                if (item.state == 1) {
+                    card.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                        max = 100
+                        progress = item.progress
+                        if (kawaii) progressTintList = ColorStateList.valueOf(accent)
+                    })
+                    if (item.info.isNotEmpty()) card.addView(TextView(this).apply { text = item.info; textSize = 12f; tintText(this); textDirection = View.TEXT_DIRECTION_LTR })
+                }
+                if (item.state == 3 && item.info.isNotEmpty()) card.addView(TextView(this).apply { text = item.info; textSize = 12f; tintText(this) })
+                if (item.state == 0 || item.state == 1) {
+                    val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.END }
+                    row.addView(button(if (item.state == 1) t("q_cancel") else t("q_remove")) {
+                        if (item.state == 1) cancelDownload() else { queue.remove(item); refreshQueue() }
+                    })
+                    card.addView(row)
+                }
+                queueList.addView(card)
+            }
         }
     }
 
@@ -1492,8 +1659,11 @@ class MainActivity : Activity() {
         dlg.show()
     }
 
-    private fun runDownloadNow(urls: List<String>, playlist: Boolean, spec: DlSpec, resume: Boolean) {
+    private fun runDownloadNow(urls: List<String>, playlist: Boolean, spec: DlSpec, resume: Boolean, item: QItem? = null) {
         if (!engineReady || busy) return
+        val qi = item ?: QItem(++queueSeq, urls, playlist, spec).also { queue.add(it) }
+        qi.state = 1
+        refreshQueue()
         setBusy(true)
         setStatus(t("st_downloading"))
         savePending(urls, playlist, spec)
@@ -1512,7 +1682,7 @@ class MainActivity : Activity() {
                     tmp.mkdirs()
                     resetProgress()
                     val prefix = if (urls.size > 1) "[${idx + 1}/${urls.size}] " else ""
-                    var embed = spec.kind == "audio"
+                    var embed = spec.kind == "audio" || spec.subs.isNotEmpty()
                     while (true) {
                     try {
                         val req = baseRequest(url, playlist)
@@ -1525,9 +1695,17 @@ class MainActivity : Activity() {
                         req.addOption("-o", template)
 
                         YoutubeDL.getInstance().execute(req, processId) { progress, eta, line ->
-                            if (line.contains("Destination:")) resetProgress()
+                            if (line.contains("Destination:")) {
+                                resetProgress()
+                                if (qi.title.isEmpty()) {
+                                    qi.title = line.substringAfter("Destination:").trim().substringAfterLast('/')
+                                        .substringBeforeLast('.').replace(Regex("\\s*\\[[^\\]]{6,}\\]$"), "")
+                                }
+                            }
                             val info = progressText(eta, line)?.let { prefix + it }
                             runOnUiThread {
+                                if (info != null) { qi.info = info; qi.progress = smoothPercent }
+                                if (tab == 4 && System.currentTimeMillis() - lastQueueUi > 500) { lastQueueUi = System.currentTimeMillis(); refreshQueue() }
                                 if (info != null) progressBar.progress = smoothPercent
                                 else if (progress >= 0 && smoothPercent == 0) progressBar.progress = progress.toInt()
                                 statusText.text = info ?: (prefix + t("st_downloading") + " ${progress.toInt()}%")
@@ -1549,7 +1727,8 @@ class MainActivity : Activity() {
                             log(t("log_no_files"))
                         } else {
                             saved += n.size
-                            addHistory(n)
+                            val media = n.filter { it.name.substringAfterLast('.').lowercase() !in listOf("srt", "vtt", "ass", "lrc") }
+                            if (media.isNotEmpty()) addHistory(media)
                         }
                         break
                     } catch (e: Throwable) {
@@ -1559,7 +1738,7 @@ class MainActivity : Activity() {
                             break
                         }
                         if (embed && (m.contains("thumbnail", true) || m.contains("mutagen", true) ||
-                                m.contains("embed", true) || m.contains("postprocessing", true))
+                                m.contains("embed", true) || m.contains("postprocessing", true) || m.contains("subtitle", true))
                         ) {
                             embed = false
                             log(t("log_embed_retry"))
@@ -1620,10 +1799,19 @@ class MainActivity : Activity() {
                     setStatus(if (friendly.isNotEmpty()) friendly else t("st_error"))
                 }
             }
+            qi.saved = saved
+            qi.state = when { stopped -> 4; saved > 0 -> 2; else -> 3 }
+            qi.progress = if (saved > 0) 100 else qi.progress
+            qi.info = if (qi.state == 3) doneText else ""
             DownloadService.stop(this)
             DownloadService.finish(this, doneTitle, doneText)
             setBusy(false)
-            runOnUiThread { setMood(mood, 5000) }
+            runOnUiThread {
+                setMood(mood, 5000)
+                if (stopped && queue.any { it.state == 0 }) queuePaused = true
+                refreshQueue()
+                if (!stopped) startNextInQueue()
+            }
         }.start()
     }
 

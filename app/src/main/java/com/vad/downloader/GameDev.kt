@@ -142,19 +142,37 @@ class GameDev(
     // ------------------------------------------------------------ редактор кода
 
     private fun codeEditor(id: String) {
-        val dlg = Dialog(act, android.R.style.Theme_Material_Light_NoActionBar_Fullscreen)
+        val dlg = Dialog(act, android.R.style.Theme_Material_NoActionBar_Fullscreen)
+        val bg = 0xFF0A0E1F.toInt()
         val edit = EditText(act).apply {
             setText(GamePacks.readCode(act, id))
             typeface = Typeface.MONOSPACE
-            textSize = 12f
+            textSize = 13f
             gravity = android.view.Gravity.TOP or android.view.Gravity.START
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
-            setHorizontallyScrolling(true)
-            setTextColor(0xFF000000.toInt())
-            setHintTextColor(0xFF666666.toInt())
-            setBackgroundColor(0xFFFFFFFF.toInt())
+            setHorizontallyScrolling(false)            // длинные строки переносятся при показе, сам код не меняется
+            setTextColor(JsHighlighter.TEXT)
+            setHintTextColor(0xFF6C7A96.toInt())
+            highlightColor = 0x663B82F6
+            setBackgroundColor(bg)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            setLineSpacing(0f, 1.15f)
+            try {
+                textCursorDrawable = android.graphics.drawable.GradientDrawable().apply { setColor(0xFFFFFFFF.toInt()); setSize(dp(2), dp(20)) }
+            } catch (_: Throwable) {
+            }
         }
-        val scroll = android.widget.ScrollView(act).apply { addView(edit) }
+        val ui = android.os.Handler(android.os.Looper.getMainLooper())
+        val hl = Runnable { JsHighlighter.apply(edit.text) }
+        edit.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) {
+                ui.removeCallbacks(hl); ui.postDelayed(hl, 250)
+            }
+        })
+        JsHighlighter.apply(edit.text)
+        val scroll = android.widget.ScrollView(act).apply { addView(edit); setBackgroundColor(bg); isFillViewport = true }
         val bar = LinearLayout(act).apply { orientation = LinearLayout.HORIZONTAL }
         fun add(label: String, click: () -> Unit) = bar.addView(button(label, click), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         add(t("ed_save")) { GamePacks.writeCode(act, id, edit.text.toString()); toast(t("dbg_done")) }
@@ -166,12 +184,13 @@ class GameDev(
                 .setNegativeButton(t("ed_drop")) { _, _ -> dlg.dismiss() }
                 .setNeutralButton(t("cancel"), null).show()
         }
-        val box = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xFFFFE6F3.toInt()); setPadding(dp(8), dp(24), dp(8), dp(8)) }
-        box.addView(TextView(act).apply { text = GamePacks.name(act, id) + " — game.js"; setTextColor(0xFF4B2E83.toInt()) })
+        val box = LinearLayout(act).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(bg); setPadding(dp(8), dp(24), dp(8), dp(8)) }
+        box.addView(TextView(act).apply { text = GamePacks.name(act, id) + " — game.js"; setTextColor(0xFF9DB2FF.toInt()); setPadding(dp(4), 0, 0, dp(6)) })
         box.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         box.addView(bar)
         dlg.setContentView(box)
         dlg.setCancelable(false)
+        dlg.setOnDismissListener { ui.removeCallbacks(hl) }
         dlg.show()
     }
 
@@ -308,5 +327,37 @@ class GameDev(
         box.addView(bottom)
         dlg.setContentView(box)
         dlg.show()
+    }
+}
+
+/** Подсветка JavaScript: цвет зависит от роли фрагмента (комментарий, строка, число, ключевое слово, встроенное, вызов функции). */
+object JsHighlighter {
+    const val TEXT = 0xFFE6EDFF.toInt()
+    private const val COMMENT = 0xFF7F8CAD.toInt()
+    private const val STRING = 0xFFFFD580.toInt()
+    private const val NUMBER = 0xFFFF9E64.toInt()
+    private const val KEYWORD = 0xFFFF79C6.toInt()
+    private const val BUILTIN = 0xFF8BE9FD.toInt()
+    private const val CALL = 0xFF50FA7B.toInt()
+
+    private class Hl(color: Int) : android.text.style.ForegroundColorSpan(color)
+
+    private val re = Regex(
+        "(//[^\\n]*|/\\*[\\s\\S]*?\\*/)" +
+            "|(\"(?:\\\\.|[^\"\\\\\\n])*\"|'(?:\\\\.|[^'\\\\\\n])*'|`(?:\\\\.|[^`\\\\])*`)" +
+            "|\\b(0x[0-9a-fA-F]+|\\d+\\.?\\d*(?:[eE][+-]?\\d+)?)\\b" +
+            "|\\b(function|var|let|const|if|else|for|while|do|return|new|this|true|false|null|undefined|break|continue|switch|case|default|typeof|in|of|try|catch|throw|instanceof)\\b" +
+            "|\\b(G|Math|window|document|console|Array|Object|JSON|Number|String)\\b" +
+            "|([A-Za-z_$][\\w$]*)(?=\\s*\\()"
+    )
+
+    fun apply(e: android.text.Editable) {
+        for (sp in e.getSpans(0, e.length, Hl::class.java)) e.removeSpan(sp)
+        if (e.length > 300_000) return
+        val colors = intArrayOf(0, COMMENT, STRING, NUMBER, KEYWORD, BUILTIN, CALL)
+        for (m in re.findAll(e)) {
+            val g = (1..6).firstOrNull { m.groups[it] != null } ?: continue
+            e.setSpan(Hl(colors[g]), m.range.first, m.range.last + 1, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
     }
 }
