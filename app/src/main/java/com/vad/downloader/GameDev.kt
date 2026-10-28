@@ -150,6 +150,8 @@ class GameDev(
             gravity = android.view.Gravity.TOP or android.view.Gravity.START
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
             setHorizontallyScrolling(true)
+            setTextColor(0xFF000000.toInt())
+            setHintTextColor(0xFF666666.toInt())
             setBackgroundColor(0xFFFFFFFF.toInt())
         }
         val scroll = android.widget.ScrollView(act).apply { addView(edit) }

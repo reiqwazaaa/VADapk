@@ -104,7 +104,7 @@ function onTouch(pts) {
   var h = { l: false, r: false, down: false, jump: false };
   pts.forEach(function (p) {
     for (var k in btn) {
-      var b = btn[k], m = b.s * 0.25;
+      var b = btn[k], m = b.s * 0.1;
       if (p.x >= b.x - m && p.x <= b.x + b.s + m && p.y >= b.y - m && p.y <= b.y + b.s + m) h[k] = true;
     }
   });
@@ -225,13 +225,16 @@ function update(dt) {
   acc += dt; tt += dt;
   var n = 0;
   while (acc >= 1 / 60 && n++ < 5 && !G.done) { acc -= 1 / 60; step(); }
-  var s = G.h / 240, vw = G.w / s;
+  var s = scaleOf(), vw = G.w / s, vh = G.h / s;
   var lead = hero.ground ? hero.gsp * 8 : hero.xsp * 8;
   var tx = Math.max(0, Math.min(L - vw, hero.x - vw * 0.45 + lead));
   camX += (tx - camX) * 0.15;
-  var ty = Math.max(-40, Math.min(170, hero.y - 165));
+  var ty = Math.max(-120, Math.min(260 - vh * 0.7, hero.y - vh * 0.68));
   camY += (ty - camY) * 0.1;
 }
+
+// масштаб: на узком экране показываем не меньше ~260 px мира по ширине
+function scaleOf() { return Math.min(G.h / 240, G.w / 260); }
 
 function drawBtn(c, key, label, x, y, sz) {
   btn[key] = { x: x, y: y, s: sz };
@@ -242,7 +245,7 @@ function drawBtn(c, key, label, x, y, sz) {
 }
 
 function draw(c) {
-  var s = G.h / 240, vw = G.w / s;
+  var s = scaleOf(), vw = G.w / s, vh = G.h / s;
   var sky = c.createLinearGradient(0, 0, 0, G.h); sky.addColorStop(0, '#9FE0FF'); sky.addColorStop(1, '#FFE6F3');
   c.fillStyle = sky; c.fillRect(0, 0, G.w, G.h);
   // дальние холмы (параллакс)
@@ -252,7 +255,7 @@ function draw(c) {
   c.lineTo(G.w, G.h); c.fill();
   c.save(); c.scale(s, s); c.translate(-camX, -camY);
   // земля
-  var x0 = Math.floor(camX / 4) * 4, bottom = camY + 260;
+  var x0 = Math.floor(camX / 4) * 4, bottom = camY + vh + 12;
   for (var x = x0; x < camX + vw + 8; x += 4) {
     var a = gy(x), b = gy(x + 4); if (a > 1e4 || b > 1e4) continue;
     c.fillStyle = '#B4773E'; c.beginPath(); c.moveTo(x, a); c.lineTo(x + 4.5, b); c.lineTo(x + 4.5, bottom); c.lineTo(x, bottom); c.fill();
@@ -270,7 +273,7 @@ function draw(c) {
     if (h.roll || h.jumping || h.charging) {
       c.rotate(h.charging ? 0 : tt * 14 * (h.face || 1)); c.drawImage(sBall, -14, -14, 28, 28);
     } else {
-      c.rotate(h.ground ? h.ang * 0.9 : 0); c.scale(h.face, 1); c.drawImage(sHero, -16, -18, 32, 32);
+      c.rotate(h.ground ? h.ang * 0.9 : 0); c.scale(h.face, 1); c.drawImage(sHero, -16, -14, 32, 32);
     }
     c.restore();
   }
@@ -279,8 +282,9 @@ function draw(c) {
   var u = Math.min(G.w, G.h) * 0.16, m = u * 0.2;
   c.fillStyle = '#4B2E83'; c.font = 'bold ' + Math.round(20 * G.dpr) + 'px sans-serif';
   c.fillText('○ ' + ringCount, 14, 30 * G.dpr);
-  drawBtn(c, 'l', '◀', m, G.h - u - m, u);
-  drawBtn(c, 'r', '▶', m * 2 + u, G.h - u - m, u);
+  // левый большой палец: стрелки, ROLL над ними; правый: JUMP
+  drawBtn(c, 'l', '\u25C0', m, G.h - u - m, u);
+  drawBtn(c, 'r', '\u25B6', m * 2 + u, G.h - u - m, u);
+  drawBtn(c, 'down', 'ROLL', m + u / 2 + m / 2, G.h - u * 2 - m * 2.4, u);
   drawBtn(c, 'jump', 'JUMP', G.w - u - m, G.h - u - m, u);
-  drawBtn(c, 'down', 'ROLL', G.w - u * 2 - m * 2, G.h - u - m, u);
 }

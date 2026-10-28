@@ -29,7 +29,7 @@ import java.util.zip.ZipOutputStream
 object GamePacks {
     class Sprite(val name: String, val size: Int)
 
-    private val builtinIds = listOf("snake", "maze", "tank", "platformer")
+    private val builtinIds = listOf("snake", "maze", "tank", "platformer", "tetris")
     private val idRe = Regex("[A-Za-z0-9_\\-]{1,40}")
     private val spriteRe = Regex("G\\.sprite\\(\\s*['\"]([A-Za-z0-9_]{1,30})['\"]\\s*,\\s*(\\d{1,3})")
 
