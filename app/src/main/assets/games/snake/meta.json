@@ -1,0 +1,2 @@
+{"name_en":"Snake","name_ru":"Змейка","hint_en":"Swipe to steer the snake and eat 8 hearts. Don't hit the walls or yourself.","hint_ru":"Води змейку свайпами и съешь 8 сердечек. Не врезайся в стены и в себя.","builtin":true,
+ "sprites":[{"name":"head","size":64},{"name":"body","size":64},{"name":"food","size":64}]}

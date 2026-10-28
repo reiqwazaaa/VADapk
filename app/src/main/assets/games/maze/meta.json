@@ -1,0 +1,2 @@
+{"name_en":"Star maze","name_ru":"Лабиринт со звёздочками","hint_en":"Collect all the stars and avoid the blue ghosts. Swipe to steer.","hint_ru":"Собери все звёздочки и не попадись синим привидениям. Води свайпами.","builtin":true,
+ "sprites":[{"name":"player","size":64},{"name":"enemy","size":64},{"name":"star","size":64},{"name":"wall","size":64}]}

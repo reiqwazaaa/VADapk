@@ -16,16 +16,31 @@ android {
         applicationId = "com.vad.downloader"
         minSdk = 29
         targetSdk = 34
-        versionCode = 1
+        // Номер сборки CI растёт сам, чтобы каждый следующий APK ставился поверх прошлого
+        versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "1.0"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
     }
 
+    // Одна и та же подпись у всех сборок - иначе Android пишет "конфликт пакетов" при обновлении
+    signingConfigs {
+        create("vad") {
+            storeFile = file("vad-debug.keystore")
+            storePassword = "android"
+            keyAlias = "vad"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("vad")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("vad")
         }
     }
 

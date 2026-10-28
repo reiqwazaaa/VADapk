@@ -1,0 +1,2 @@
+{"name_en":"Tank","name_ru":"Танчики","hint_en":"Drag to move the tank, it shoots by itself. Destroy 10 enemies, don't lose all hearts.","hint_ru":"Води танк пальцем, он стреляет сам. Уничтожь 10 врагов и не потеряй все сердца.","builtin":true,
+ "sprites":[{"name":"tank","size":64},{"name":"enemy","size":64},{"name":"bullet","size":32}]}
