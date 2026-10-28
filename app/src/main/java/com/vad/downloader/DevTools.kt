@@ -339,7 +339,7 @@ class DevTools(
                     }
                     1 -> {
                         val e = prefs.edit()
-                        for (k in listOf("outfit_tank", "outfit_pj", "wins", "wins_snake", "wins_maze", "wins_tank", "wins_run", "palette", "outfit_cur", "outfit_on")) e.remove(k)
+                        for (k in listOf("outfit_tank", "outfit_pj", "wins", "wins_snake", "wins_maze", "wins_tank", "wins_platformer", "palette", "outfit_cur", "outfit_on")) e.remove(k)
                         e.apply(); toast(t("dbg_done")); rebuild()
                     }
                     2 -> textEditor()
