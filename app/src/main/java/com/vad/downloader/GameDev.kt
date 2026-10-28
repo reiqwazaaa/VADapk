@@ -111,7 +111,7 @@ class GameDev(
             act.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
                 if (it.moveToFirst()) name = it.getString(0).orEmpty()
             }
-            val id = try { GamePacks.import(act, data, name) } catch (_: Throwable) { null }
+            val id = try { GamePacks.importGame(act, data, name) } catch (_: Throwable) { null }
             if (id == null) toast(t("ed_bad")) else toast(String.format(t("ed_imported"), GamePacks.name(act, id)))
         }
     }

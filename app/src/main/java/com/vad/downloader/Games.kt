@@ -177,8 +177,8 @@ object GamePacks {
         return out.toByteArray()
     }
 
-    /** Принимает .zip (meta.json + game.js + sprites/*.png) или просто текст JavaScript. Возвращает id или null. */
-    fun import(ctx: Context, data: ByteArray, fileName: String): String? {
+    /** Принимает .zip (meta.json + game.js + sprites/NAME.png) или просто текст JavaScript. Возвращает id или null. */
+    fun importGame(ctx: Context, data: ByteArray, fileName: String): String? {
         val base = fileName.substringBeforeLast('.').substringBeforeLast(".vadgame")
         if (data.size < 4 || !(data[0] == 'P'.code.toByte() && data[1] == 'K'.code.toByte())) {
             val code = String(data, Charsets.UTF_8)
