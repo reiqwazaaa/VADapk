@@ -39,6 +39,7 @@ class DownloadService : Service() {
                 YoutubeDL.getInstance().destroyProcessById(PROCESS_ID)
             } catch (_: Throwable) {
             }
+            Converter.cancelActive()
             return START_NOT_STICKY
         }
         val n = buildNotification(this, Strings.t("n_title"), Strings.t("n_prep"), -1)

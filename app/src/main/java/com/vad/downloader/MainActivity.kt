@@ -72,6 +72,7 @@ class MainActivity : Activity() {
     private val processId = DownloadService.PROCESS_ID
     private var lastNotifyAt = 0L
     private val reqPickFolder = 42
+    private val reqPickConvert = 48
 
     private lateinit var urlInput: EditText
     private lateinit var playlistBox: CheckBox
@@ -153,6 +154,22 @@ class MainActivity : Activity() {
     @Volatile private var busy = false
 
     private val prefs by lazy { getSharedPreferences("vad", Context.MODE_PRIVATE) }
+    private val conv by lazy {
+        Converter(
+            this, prefs,
+            { text, click -> button(text, click) },
+            { items -> styledAdapter(items) },
+            { tintText(it) },
+            { dp(it) },
+            { busy },
+            { setBusy(it) },
+            { saveToDownloads(it).size },
+            { log(it) },
+            { tab = 0; applyTabFn?.invoke() },
+            { startNextInQueue() },
+            reqPickConvert
+        )
+    }
 
     private fun t(key: String) = Strings.t(key)
     private fun f(key: String, vararg a: Any?) = Strings.f(key, *a)
@@ -605,6 +622,9 @@ class MainActivity : Activity() {
         queueBtn = button(t("q_btn")) { tab = 4; refreshQueue(); applyTabFn?.invoke() }
         histRow.addView(queueBtn)
         main.addView(histRow)
+        val convRow = FitRow(this)
+        convRow.addView(button(t("cv_btn")) { tab = 5; applyTabFn?.invoke() })
+        main.addView(convRow)
         updateQueueButton()
 
 
@@ -743,6 +763,7 @@ class MainActivity : Activity() {
         })
         queueButtons.addView(button(t("q_resume")) { queuePaused = false; startNextInQueue(); refreshQueue() })
         queuePane.addView(queueButtons)
+        val convPane = conv.buildView()
         val content = FrameLayout(this)
         val matchBoth = ViewGroup.LayoutParams.MATCH_PARENT
         content.addView(mainScroll, FrameLayout.LayoutParams(matchBoth, matchBoth))
@@ -750,6 +771,7 @@ class MainActivity : Activity() {
         content.addView(logPane, FrameLayout.LayoutParams(matchBoth, matchBoth))
         content.addView(historyPane, FrameLayout.LayoutParams(matchBoth, matchBoth))
         content.addView(queuePane, FrameLayout.LayoutParams(matchBoth, matchBoth))
+        content.addView(convPane, FrameLayout.LayoutParams(matchBoth, matchBoth))
 
         applyTabFn = {
             mainScroll.visibility = if (tab == 0) View.VISIBLE else View.GONE
@@ -757,6 +779,7 @@ class MainActivity : Activity() {
             logPane.visibility = if (tab == 1) View.VISIBLE else View.GONE
             historyPane.visibility = if (tab == 3) View.VISIBLE else View.GONE
             queuePane.visibility = if (tab == 4) View.VISIBLE else View.GONE
+            convPane.visibility = if (tab == 5) View.VISIBLE else View.GONE
             if (tab == 1) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
         }
         root.addView(content, LinearLayout.LayoutParams(matchBoth, 0, 1f))
@@ -776,7 +799,7 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         when (tab) {
             1 -> { tab = 2; applyTabFn?.invoke() }
-            2, 3 -> { tab = 0; applyTabFn?.invoke() }
+            2, 3, 5 -> { tab = 0; applyTabFn?.invoke() }
             else -> @Suppress("DEPRECATION") super.onBackPressed()
         }
     }
@@ -1011,6 +1034,10 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == reqPickConvert && resultCode == RESULT_OK) {
+            conv.onPicked(data)
+            return
+        }
         if (requestCode == 44 && resultCode == RESULT_OK) {
             data?.data?.let { dev.onSpritePicked(it) }
             return
