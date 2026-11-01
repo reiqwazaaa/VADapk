@@ -95,6 +95,8 @@ class Reader(
     private var bars = true
     private var gen = 0
     private var kindPages = false
+    private var span = 1            // сколько страниц показано сейчас (1 или 2)
+    private var spreadNow = false   // режим разворота действовал при последнем показе
 
     // вью
     private lateinit var listPane: LinearLayout
@@ -115,6 +117,7 @@ class Reader(
     private lateinit var bTheme: Button
     private lateinit var bManga: Button
     private lateinit var bFit: Button
+    private lateinit var bSpread: Button
 
     private val saveRun = Runnable { saveProgress(if (epub != null) epubIdx else 0, curFrac) }
 
@@ -244,6 +247,7 @@ class Reader(
                 }
             }
             onTurn = { fwd -> turn(fwd) }
+            onSize = { onResized() }
         }
         viewer.addView(web, FrameLayout.LayoutParams(mp, mp))
         viewer.addView(comic, FrameLayout.LayoutParams(mp, mp))
@@ -261,7 +265,8 @@ class Reader(
         bTheme = button(t("rd_theme")) { changeTheme() }
         bManga = button("") { toggleManga() }
         bFit = button("") { toggleFit() }
-        listOf(bMinus, bPlus, bTheme, bManga, bFit).forEach { topBar.addView(it, w()) }
+        bSpread = button("") { cycleSpread() }
+        listOf(bMinus, bPlus, bTheme, bManga, bFit, bSpread).forEach { topBar.addView(it, w()) }
         viewer.addView(topBar, FrameLayout.LayoutParams(mp, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
         // нижняя панель
@@ -323,6 +328,7 @@ class Reader(
     private fun updateToolLabels() {
         bManga.text = f("rd_manga", if (rtl) t("rd_on") else t("rd_off"))
         bFit.text = if (fitW) t("rd_fit_width") else t("rd_fit_page")
+        bSpread.text = f("rd_spread", when (prefs.getInt("rd_spread", 0)) { 1 -> t("rd_on"); 2 -> t("rd_off"); else -> t("rd_auto") })
     }
 
     @Suppress("DEPRECATION")
@@ -339,7 +345,7 @@ class Reader(
         web.visibility = if (kindPages) View.GONE else View.VISIBLE
         comic.visibility = if (kindPages) View.VISIBLE else View.GONE
         listOf(bMinus, bPlus, bTheme).forEach { it.visibility = if (kindPages) View.GONE else View.VISIBLE }
-        listOf(bManga, bFit).forEach { it.visibility = if (kindPages) View.VISIBLE else View.GONE }
+        listOf(bManga, bFit, bSpread).forEach { it.visibility = if (kindPages) View.VISIBLE else View.GONE }
         pageRow.visibility = if (kindPages) View.VISIBLE else View.GONE
         epubRow.visibility = if (epub != null) View.VISIBLE else View.GONE
         updateToolLabels()
@@ -396,6 +402,7 @@ class Reader(
         comic.rtl = rtl
         seek.layoutDirection = if (rtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
         updateToolLabels()
+        if (pages != null) showPage(index, false) // порядок страниц в развороте меняется
     }
 
     private fun toggleFit() {
@@ -412,7 +419,7 @@ class Reader(
     private fun css(): String {
         val th = themes[theme]
         return "html,body{background:${hex(th.bg)} !important;color:${hex(th.fg)} !important}" +
-            "body{margin:0;padding:64px 16px 90px;line-height:1.6;font-family:serif;overflow-wrap:anywhere}" +
+            "body{box-sizing:border-box;max-width:40em;margin:0 auto;padding:64px 16px 90px;line-height:1.6;font-family:serif;overflow-wrap:anywhere}" +
             "img,svg,video{max-width:100%;height:auto}" +
             "table{border-collapse:collapse;max-width:100%}td,th{border:1px solid #8888;padding:4px 6px}" +
             "pre,code{white-space:pre-wrap;font-family:monospace}" +
@@ -487,55 +494,110 @@ class Reader(
 
     // ------------------------------------------------------------------ страницы
 
-    private fun turn(fwd: Boolean) {
-        val p = pages ?: return
-        val n = index + if (fwd) 1 else -1
-        if (n < 0) { toast(t("rd_first_page")); return }
-        if (n >= p.count) { toast(t("rd_last_page")); return }
-        if (bars) { bars = false; applyBars() }
-        showPage(n, !fwd)
+    /** Разворот из двух страниц: «авто» включается на широком экране (развёрнутый Fold, планшет, альбомная ориентация). */
+    private fun wantSpread(): Boolean {
+        if (!::comic.isInitialized || comic.width == 0) return false
+        return when (prefs.getInt("rd_spread", 0)) {
+            1 -> true
+            2 -> false
+            else -> comic.width / act.resources.displayMetrics.density >= 560f
+        }
     }
 
-    private fun targetWidth(): Int = act.resources.displayMetrics.widthPixels * 3 / 2
+    /** Экран изменил размер (сложили или раскрыли телефон, повернули): при необходимости пересобираем разворот. */
+    private fun onResized() {
+        if (kindPages && pages != null && wantSpread() != spreadNow) showPage(index, false)
+    }
 
-    private fun showPage(i: Int, fromEnd: Boolean) {
+    private fun cycleSpread() {
+        prefs.edit().putInt("rd_spread", (prefs.getInt("rd_spread", 0) + 1) % 3).apply()
+        updateToolLabels()
+        if (pages != null) showPage(index, false)
+    }
+
+    private fun turn(fwd: Boolean) {
+        val p = pages ?: return
+        if (fwd) {
+            val n = index + span
+            if (n >= p.count) { toast(t("rd_last_page")); return }
+            if (bars) { bars = false; applyBars() }
+            showPage(n, false)
+        } else {
+            if (index <= 0) { toast(t("rd_first_page")); return }
+            if (bars) { bars = false; applyBars() }
+            val start = if (wantSpread() && index - 2 >= 1) index - 2 else index - 1
+            showPage(start, true, index)
+        }
+    }
+
+    private fun targetWidth(spread: Boolean): Int {
+        val w = act.resources.displayMetrics.widthPixels
+        return if (spread) w * 3 / 4 else w * 3 / 2
+    }
+
+    private fun fetch(p: Pages, idx: Int, tw: Int): Bitmap? {
+        cache.get(idx)?.let { return it }
+        val bm = p.bitmap(idx, tw)
+        if (bm != null) cache.put(idx, bm)
+        return bm
+    }
+
+    /**
+     * Показывает страницу idx, а в режиме разворота ещё и следующую. Обложка (страница 1) и широкие
+     * страницы-развороты всегда стоят одни. backFrom - с какой страницы листаем назад (чтобы не наложить пары).
+     */
+    private fun showPage(i: Int, fromEnd: Boolean, backFrom: Int = -1, single: Boolean = false) {
         val p = pages ?: return
         if (p.count == 0) return
         val idx = i.coerceIn(0, p.count - 1)
-        index = idx
+        val sp = wantSpread()
+        spreadNow = sp
         seek.max = (p.count - 1).coerceAtLeast(0)
         seek.progress = idx
-        pageLabel.text = f("rd_page", idx + 1, p.count)
-        saveProgress(idx, 0f)
-        val hit = cache.get(idx)
-        if (hit != null) {
-            comic.setPage(hit, fromEnd)
-            prefetch(p, idx)
-            return
-        }
         val my = ++gen
         comic.setLoading()
-        val tw = targetWidth()
+        val tw = targetWidth(sp)
+        val order = rtl
         exec.execute {
-            val bm = try { p.bitmap(idx, tw) } catch (_: Throwable) { null }
-            if (bm != null) cache.put(idx, bm)
-            act.runOnUiThread {
-                if (my == gen && pages === p) {
-                    if (bm != null) {
-                        comic.setPage(bm, fromEnd)
-                        prefetch(p, idx)
-                    } else {
-                        comic.setPage(null, false)
-                        toast(t("rd_err_page"))
-                    }
+            var a: Bitmap? = null
+            var b: Bitmap? = null
+            try {
+                a = fetch(p, idx, tw)
+                if (sp && !single && idx != 0 && idx + 1 < p.count && (backFrom < 0 || idx + 1 < backFrom) &&
+                    a != null && a.width <= a.height
+                ) {
+                    val c = fetch(p, idx + 1, tw)
+                    if (c != null && c.width <= c.height) b = c
                 }
+            } catch (_: Throwable) {
+            }
+            val ra = a
+            val rb = b
+            act.runOnUiThread {
+                if (my != gen || pages !== p) return@runOnUiThread
+                if (ra == null) {
+                    comic.setPage(null, false)
+                    toast(t("rd_err_page"))
+                    return@runOnUiThread
+                }
+                val sz = if (rb != null) 2 else 1
+                if (backFrom >= 0 && idx + sz < backFrom) {
+                    // между найденной парой и прежней страницей остался пропуск - берём страницу перед прежней
+                    showPage(backFrom - 1, true, backFrom, true)
+                    return@runOnUiThread
+                }
+                span = sz
+                index = idx
+                pageLabel.text = if (sz == 2) f("rd_pages", idx + 1, idx + 2, p.count) else f("rd_page", idx + 1, p.count)
+                saveProgress(idx, 0f)
+                if (rb != null) comic.setPages(ra, rb, order, fromEnd) else comic.setPage(ra, fromEnd)
+                prefetch(p, idx + sz, idx, tw)
             }
         }
     }
 
-    private fun prefetch(p: Pages, idx: Int) {
-        val tw = targetWidth()
-        for (n in listOf(idx + 1, idx - 1)) {
+    private fun prefetch(p: Pages, next: Int, cur: Int, tw: Int) {
+        for (n in listOf(next, next + 1, cur - 1, cur - 2)) {
             if (n < 0 || n >= p.count || cache.get(n) != null) continue
             exec.execute {
                 if (pages === p && cache.get(n) == null) {
@@ -861,16 +923,25 @@ class Reader(
 // ---------------------------------------------------------------------------------------------
 
 private class ComicView(ctx: Context) : View(ctx) {
-    var bmp: Bitmap? = null
-        private set
     var fitWidth = false
     var rtl = false
     var onTap: ((Int) -> Unit)? = null      // -1 левый край, 0 центр, 1 правый край
     var onTurn: ((Boolean) -> Unit)? = null // true - вперёд
+    var onSize: (() -> Unit)? = null
     private var loading = false
     private var zoom = 1f
     private var tx = 0f
     private var ty = 0f
+
+    // одна или две страницы рядом: t1 слева на экране, t2 справа; k - выравнивание высоты, x2 - сдвиг второй
+    private var t1: Bitmap? = null
+    private var t2: Bitmap? = null
+    private var k1 = 1f
+    private var k2 = 1f
+    private var x2 = 0f
+    private var lw = 1f
+    private var lh = 1f
+
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
     private val dots = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -899,10 +970,10 @@ private class ComicView(ctx: Context) : View(ctx) {
         }
 
         override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
-            val b = bmp ?: return false
+            if (t1 == null) return false
             val s = scale()
-            val iw = b.width * s
-            val ih = b.height * s
+            val iw = lw * s
+            val ih = lh * s
             val atLeft = iw <= width + 1 || tx >= -1f
             val atRight = iw <= width + 1 || tx <= width - iw + 1f
             val atTop = ih <= height + 1 || ty >= -1f
@@ -931,25 +1002,24 @@ private class ComicView(ctx: Context) : View(ctx) {
     })
 
     private fun base(): Float {
-        val b = bmp ?: return 1f
-        if (width == 0 || height == 0) return 1f
-        val fw = width.toFloat() / b.width
-        return if (fitWidth) fw else minOf(fw, height.toFloat() / b.height)
+        if (t1 == null || width == 0 || height == 0) return 1f
+        val fw = width.toFloat() / lw
+        return if (fitWidth) fw else minOf(fw, height.toFloat() / lh)
     }
 
     private fun scale() = base() * zoom
 
     private fun clamp() {
-        val b = bmp ?: return
+        if (t1 == null) return
         val s = scale()
-        val iw = b.width * s
-        val ih = b.height * s
+        val iw = lw * s
+        val ih = lh * s
         tx = if (iw <= width) (width - iw) / 2f else tx.coerceIn(width - iw, 0f)
         ty = if (ih <= height) (height - ih) / 2f else ty.coerceIn(height - ih, 0f)
     }
 
     private fun zoomBy(factor: Float, fx: Float, fy: Float) {
-        if (bmp == null) return
+        if (t1 == null) return
         val nz = (zoom * factor).coerceIn(1f, 6f)
         val k = nz / zoom
         tx = fx - (fx - tx) * k
@@ -965,13 +1035,43 @@ private class ComicView(ctx: Context) : View(ctx) {
     }
 
     fun setPage(b: Bitmap?, fromEnd: Boolean) {
-        bmp = b
+        if (b == null) {
+            t1 = null
+            t2 = null
+        } else {
+            t1 = b
+            t2 = null
+            k1 = 1f
+            k2 = 1f
+            x2 = 0f
+            lw = b.width.toFloat()
+            lh = b.height.toFloat()
+        }
+        finishLayout(fromEnd)
+    }
+
+    /** Две страницы рядом. rtlOrder: первая (меньший номер) стоит справа, как в манге. */
+    fun setPages(a: Bitmap, b: Bitmap, rtlOrder: Boolean, fromEnd: Boolean) {
+        val left = if (rtlOrder) b else a
+        val right = if (rtlOrder) a else b
+        val h = maxOf(left.height, right.height).toFloat()
+        t1 = left
+        t2 = right
+        k1 = h / left.height
+        k2 = h / right.height
+        x2 = left.width * k1
+        lw = x2 + right.width * k2
+        lh = h
+        finishLayout(fromEnd)
+    }
+
+    private fun finishLayout(fromEnd: Boolean) {
         loading = false
         zoom = 1f
         tx = 0f
         ty = 0f
-        if (b != null) {
-            val ih = b.height * scale()
+        if (t1 != null) {
+            val ih = lh * scale()
             ty = if (fromEnd && ih > height) height - ih else 0f
             clamp()
         }
@@ -980,25 +1080,35 @@ private class ComicView(ctx: Context) : View(ctx) {
 
     /** После смены режима «по странице / по ширине». */
     fun refit() {
-        setPage(bmp, false)
+        zoom = 1f
+        tx = 0f
+        ty = 0f
+        clamp()
+        invalidate()
     }
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
         clamp()
+        onSize?.invoke()
+    }
+
+    private fun drawTile(c: Canvas, b: Bitmap, k: Float, x: Float, s: Float) {
+        mat.setScale(s * k, s * k)
+        mat.postTranslate(tx + x * s, ty)
+        c.drawBitmap(b, mat, paint)
     }
 
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(Color.BLACK)
-        val b = bmp
-        if (b == null) {
-            if (loading) canvas.drawText("…", width / 2f, height / 2f, dots)
+        val a = t1
+        if (a == null) {
+            if (loading) canvas.drawText("\u2026", width / 2f, height / 2f, dots)
             return
         }
         val s = scale()
-        mat.setScale(s, s)
-        mat.postTranslate(tx, ty)
-        canvas.drawBitmap(b, mat, paint)
+        drawTile(canvas, a, k1, 0f, s)
+        t2?.let { drawTile(canvas, it, k2, x2, s) }
     }
 
     override fun onTouchEvent(ev: MotionEvent): Boolean {
