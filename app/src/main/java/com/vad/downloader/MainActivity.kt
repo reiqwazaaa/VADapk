@@ -33,6 +33,7 @@ import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.OvershootInterpolator
@@ -73,6 +74,8 @@ class MainActivity : Activity() {
     private var lastNotifyAt = 0L
     private val reqPickFolder = 42
     private val reqPickConvert = 48
+    private val reqPickReader = 49
+    private val reqPickReaderTree = 50
 
     private lateinit var urlInput: EditText
     private lateinit var playlistBox: CheckBox
@@ -154,6 +157,17 @@ class MainActivity : Activity() {
     @Volatile private var busy = false
 
     private val prefs by lazy { getSharedPreferences("vad", Context.MODE_PRIVATE) }
+    private val reader by lazy {
+        Reader(
+            this, prefs,
+            { text, click -> button(text, click) },
+            { tintText(it) },
+            { dp(it) },
+            { tab = 0; applyTabFn?.invoke() },
+            { applyTabFn?.invoke() },
+            reqPickReader, reqPickReaderTree
+        )
+    }
     private val conv by lazy {
         Converter(
             this, prefs,
@@ -624,6 +638,7 @@ class MainActivity : Activity() {
         main.addView(histRow)
         val convRow = FitRow(this)
         convRow.addView(button(t("cv_btn")) { tab = 5; applyTabFn?.invoke() })
+        convRow.addView(button(t("rd_btn")) { tab = 6; applyTabFn?.invoke() })
         main.addView(convRow)
         updateQueueButton()
 
@@ -764,6 +779,7 @@ class MainActivity : Activity() {
         queueButtons.addView(button(t("q_resume")) { queuePaused = false; startNextInQueue(); refreshQueue() })
         queuePane.addView(queueButtons)
         val convPane = conv.buildView()
+        val readerPane = reader.buildView()
         val content = FrameLayout(this)
         val matchBoth = ViewGroup.LayoutParams.MATCH_PARENT
         content.addView(mainScroll, FrameLayout.LayoutParams(matchBoth, matchBoth))
@@ -772,6 +788,7 @@ class MainActivity : Activity() {
         content.addView(historyPane, FrameLayout.LayoutParams(matchBoth, matchBoth))
         content.addView(queuePane, FrameLayout.LayoutParams(matchBoth, matchBoth))
         content.addView(convPane, FrameLayout.LayoutParams(matchBoth, matchBoth))
+        content.addView(readerPane, FrameLayout.LayoutParams(matchBoth, matchBoth))
 
         applyTabFn = {
             mainScroll.visibility = if (tab == 0) View.VISIBLE else View.GONE
@@ -780,6 +797,11 @@ class MainActivity : Activity() {
             historyPane.visibility = if (tab == 3) View.VISIBLE else View.GONE
             queuePane.visibility = if (tab == 4) View.VISIBLE else View.GONE
             convPane.visibility = if (tab == 5) View.VISIBLE else View.GONE
+            readerPane.visibility = if (tab == 6) View.VISIBLE else View.GONE
+            // во время чтения прячем шапку приложения и поля: читалка занимает весь экран
+            val full = tab == 6 && reader.reading
+            header.visibility = if (full) View.GONE else View.VISIBLE
+            if (full) root.setPadding(0, 0, 0, 0) else root.setPadding(dp(16), dp(24), dp(16), dp(16))
             if (tab == 1) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
         }
         root.addView(content, LinearLayout.LayoutParams(matchBoth, 0, 1f))
@@ -800,8 +822,14 @@ class MainActivity : Activity() {
         when (tab) {
             1 -> { tab = 2; applyTabFn?.invoke() }
             2, 3, 5 -> { tab = 0; applyTabFn?.invoke() }
+            6 -> if (!reader.handleBack()) { tab = 0; applyTabFn?.invoke() }
             else -> @Suppress("DEPRECATION") super.onBackPressed()
         }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (tab == 6 && reader.onKey(keyCode)) return true
+        return super.onKeyDown(keyCode, event)
     }
 
     private fun handleShareIntent(i: Intent?) {
@@ -1034,6 +1062,14 @@ class MainActivity : Activity() {
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == reqPickReader && resultCode == RESULT_OK) {
+            reader.onFilePicked(data)
+            return
+        }
+        if (requestCode == reqPickReaderTree && resultCode == RESULT_OK) {
+            reader.onFolderPicked(data)
+            return
+        }
         if (requestCode == reqPickConvert && resultCode == RESULT_OK) {
             conv.onPicked(data)
             return
