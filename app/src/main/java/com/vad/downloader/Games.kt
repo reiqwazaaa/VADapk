@@ -29,7 +29,37 @@ import java.util.zip.ZipOutputStream
 object GamePacks {
     class Sprite(val name: String, val size: Int)
 
-    private val builtinIds = listOf("snake", "maze", "tank", "platformer", "tetris")
+    private val builtinIds = listOf("snake", "maze", "starfighter", "tank", "platformer", "tetris", "arkanoid", "invaders", "chess")
+
+    // Старый «tank» (кораблики-танчики) стал «starfighter», а «tank» теперь клон танчиков с NES/Dendy.
+    private const val OLD_TANK_SHA = "4532451ce55c2132ff135d8c4334da84d5b371af3ed474bab22f9589a18cfa5b"
+    private const val NEW_TANK_MARK = "BATTLE_CITY_V1"
+
+    private fun migrate(ctx: Context) {
+        try {
+            val f = File(dir(ctx, "tank"), "game.js")
+            if (!f.isFile) return
+            val fresh = readAsset(ctx, "games/tank/game.js")?.toString(Charsets.UTF_8) ?: return
+            if (!fresh.contains(NEW_TANK_MARK)) return
+            val cur = f.readBytes()
+            if (cur.toString(Charsets.UTF_8).contains(NEW_TANK_MARK)) return
+            val sha = java.security.MessageDigest.getInstance("SHA-256").digest(cur).joinToString("") { "%02x".format(it) }
+            if (sha != OLD_TANK_SHA) {
+                // пользователь правил старый tank: сохраняем его как отдельную свою игру
+                val keep = File(root(ctx), "tank_custom")
+                if (!keep.exists()) dir(ctx, "tank").copyRecursively(keep)
+            }
+            seed(ctx, "tank", true)
+        } catch (_: Throwable) {
+        }
+    }
+
+    // Игры из меню «Игры»: assets/free/<id>/game.js (не участвуют в мини-играх перед загрузкой)
+    fun freeExists(ctx: Context, id: String): Boolean = try {
+        ctx.assets.open("free/$id/game.js").use { true }
+    } catch (_: Throwable) {
+        false
+    }
     private val idRe = Regex("[A-Za-z0-9_\\-]{1,40}")
     private val spriteRe = Regex("G\\.sprite\\(\\s*['\"]([A-Za-z0-9_]{1,30})['\"]\\s*,\\s*(\\d{1,3})")
 
@@ -52,6 +82,7 @@ object GamePacks {
     }
 
     fun ids(ctx: Context): List<String> {
+        migrate(ctx)
         for (id in builtinIds) seed(ctx, id, false)
         return root(ctx).listFiles()?.filter { it.isDirectory && File(it, "game.js").isFile && idRe.matches(it.name) }
             ?.map { it.name }?.sortedWith(compareBy({ it !in builtinIds }, { builtinIds.indexOf(it) }, { it })) ?: emptyList()
@@ -234,10 +265,24 @@ object GamePacks {
             val f = spriteFile(ctx, id, s.name)
             if (f.isFile) spr.put(s.name, "data:image/png;base64," + Base64.encodeToString(f.readBytes(), Base64.NO_WRAP))
         }
+        return page(ctx, id, codeOverride ?: readCode(ctx, id), spr)
+    }
+
+    /** Страница для игры из меню «Игры»; extra - готовые картинки (например, Юта-тян) под именами спрайтов. */
+    fun freeHtml(ctx: Context, id: String, extra: Map<String, String>): String {
+        val spr = JSONObject()
+        for ((k, v) in extra) spr.put(k, v)
+        val code = readAsset(ctx, "free/$id/game.js")?.toString(Charsets.UTF_8) ?: ""
+        return page(ctx, "free_$id", code, spr)
+    }
+
+    private fun page(ctx: Context, id: String, code: String, spr: JSONObject): String {
         val host = String(readAsset(ctx, "host.html") ?: ByteArray(0), Charsets.UTF_8)
-        val code = codeOverride ?: readCode(ctx, id)
-        val js = JSONObject.quote(code).replace("</", "<\\/").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
-        return host.replace("__SPR__", spr.toString().replace("</", "<\\/")).replace("__CODE__") { js }
+        fun q(s: String) = JSONObject.quote(s).replace("</", "<\\/").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+        return host.replace("__SPR__", spr.toString().replace("</", "<\\/"))
+            .replace("__LANG__", JSONObject.quote(Strings.code))
+            .replace("__GID__", JSONObject.quote(id))
+            .replace("__CODE__") { q(code) }
     }
 }
 
@@ -249,6 +294,10 @@ private fun String.replace(key: String, value: () -> String): String {
 /** WebView, в котором работает игра. Сети нет (CSP + blockNetworkLoads), файлов нет. */
 @SuppressLint("SetJavaScriptEnabled")
 class GameHost(ctx: Context, html: String, private val onFinish: (Boolean) -> Unit, private val onError: (String) -> Unit) : FrameLayout(ctx) {
+    /** Хранилище для G.load / G.save; задаётся сразу после создания, до того как игра успеет запуститься. */
+    var store: android.content.SharedPreferences? = null
+    var storeId: String = ""
+
     private val web = WebView(ctx)
     private val ui = Handler(Looper.getMainLooper())
     private var finished = false
@@ -275,6 +324,15 @@ class GameHost(ctx: Context, html: String, private val onFinish: (Boolean) -> Un
             @JavascriptInterface
             fun finish(win: Boolean) {
                 ui.post { if (!finished) { finished = true; onFinish(win) } }
+            }
+
+            /** Рекорды и прогресс игры (G.load / G.save). */
+            @JavascriptInterface
+            fun load(key: String): String? = store?.getString("gs_${storeId}_${key.take(40)}", null)
+
+            @JavascriptInterface
+            fun save(key: String, value: String) {
+                store?.edit()?.putString("gs_${storeId}_${key.take(40)}", value.take(20000))?.apply()
             }
 
             @JavascriptInterface

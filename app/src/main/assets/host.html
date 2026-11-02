@@ -7,13 +7,22 @@
 <script>
 window.__SPR = __SPR__;
 window.__CODE = __CODE__;
+window.__LANG = __LANG__;
+window.__GID = __GID__;
 (function () {
   'use strict';
   var cv = document.getElementById('c'), ctx = cv.getContext('2d');
   var dpr = window.devicePixelRatio || 1;
-  var imgs = {};
+  var imgs = {}, mem = {};
   var G = {
     ctx: ctx, w: 0, h: 0, dpr: dpr, done: false, touches: [],
+    // язык интерфейса приложения: 'ru', 'en', 'rk' (няшный русский), 'de' ... Для своих текстов игры.
+    lang: String(window.__LANG || 'en'),
+    // Постоянное хранилище игры (рекорды, прогресс): строки, до ~20 КБ на значение. load вернёт null, если ничего нет.
+    load: function (k) { try { if (window.VadBridge) { var v = VadBridge.load(String(k)); return v === undefined || v === null || v === 'null' ? null : String(v); } } catch (e) {} return mem[k] === undefined ? null : mem[k]; },
+    save: function (k, v) { try { if (window.VadBridge) { VadBridge.save(String(k), String(v)); return; } } catch (e) {} mem[k] = String(v); },
+    // Закрыть окно игры (для игр из меню «Игры»; в мини-игре перед загрузкой используйте win/lose).
+    exit: function () { finish(true); },
     rand: function (a, b) { return a + Math.random() * (b - a); },
     randInt: function (n) { return Math.floor(Math.random() * n); },
     win: function () { finish(true); },

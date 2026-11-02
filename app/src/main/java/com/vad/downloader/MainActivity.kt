@@ -41,7 +41,6 @@ import android.webkit.MimeTypeMap
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
-import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -49,6 +48,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.Spinner
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import com.yausername.ffmpeg.FFmpeg
@@ -78,7 +78,8 @@ class MainActivity : Activity() {
     private val reqPickReaderTree = 50
 
     private lateinit var urlInput: EditText
-    private lateinit var playlistBox: CheckBox
+    private lateinit var playlistBox: Switch
+    private lateinit var gifBox: Switch
     private lateinit var qualitySpinner: Spinner
     private lateinit var pathText: TextView
     private lateinit var progressBar: ProgressBar
@@ -297,6 +298,21 @@ class MainActivity : Activity() {
         if (kawaii) tv.setTextColor(kawaiiText)
     }
 
+    /** Тумблер вместо флажка. */
+    private fun toggle(text: String, checked: Boolean, onChange: ((Boolean) -> Unit)? = null): Switch =
+        Switch(this).apply {
+            this.text = text
+            isChecked = checked
+            textSize = 16f
+            setPadding(dp(4), dp(10), dp(4), dp(10))
+            tintText(this)
+            if (kawaii) {
+                thumbTintList = ColorStateList.valueOf(accent)
+                trackTintList = ColorStateList.valueOf((0x66 shl 24) or (accent and 0xFFFFFF))
+            }
+            if (onChange != null) setOnCheckedChangeListener { _, on -> onChange(on) }
+        }
+
     private fun styledAdapter(items: List<String>): ArrayAdapter<String> =
         object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_spinner_item, items) {
             init {
@@ -422,6 +438,107 @@ class MainActivity : Activity() {
         toast(t(when (next) { 1 -> "outfit_on"; 2 -> "outfit_pj"; else -> "outfit_off" }))
     }
 
+    /** Меню «⋯»: игры, читалка, конвертер и (если открыт няшный режим) Юта-тян. */
+    private fun showMoreMenu() {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        var dlg: AlertDialog? = null
+        fun item(label: String, action: () -> Unit) {
+            box.addView(button(label) { dlg?.dismiss(); action() })
+        }
+        item(t("more_games")) { showGames() }
+        item(t("rd_btn")) { tab = 6; applyTabFn?.invoke() }
+        item(t("cv_btn")) { tab = 5; applyTabFn?.invoke() }
+        if (prefs.getBoolean("kawaii_unlocked", false)) item(t("date_btn")) { showDate() }
+        dlg = AlertDialog.Builder(this)
+            .setTitle(t("more_title"))
+            .setView(box)
+            .setNegativeButton(t("cancel"), null)
+            .show()
+    }
+
+    // ------------------------------------------------------------ меню «Игры»
+
+    private val freeGames = listOf(
+        "chess_full" to "free_chess",
+        "snake_inf" to "free_snake",
+        "tetris_inf" to "free_tetris",
+        "tanks" to "free_tanks"
+    )
+
+    private fun showGames() {
+        val list = freeGames.filter { GamePacks.freeExists(this, it.first) }
+        if (list.isEmpty()) { toast(t("games_none")); return }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        var dlg: AlertDialog? = null
+        for ((id, key) in list) box.addView(button(t(key)) { dlg?.dismiss(); playFree(id, t(key)) })
+        dlg = AlertDialog.Builder(this)
+            .setTitle(t("games_title"))
+            .setView(box)
+            .setNegativeButton(t("cancel"), null)
+            .show()
+    }
+
+    /** Картинки Юты-тян для игр (шахматы): текущий наряд и все четыре настроения. */
+    private fun yutaSprites(): Map<String, String> {
+        val out = LinkedHashMap<String, String>()
+        for (m in listOf("normal", "happy", "sad", "wink")) {
+            try {
+                val d = girlDrawable(m) ?: continue
+                val w = if (d.intrinsicWidth > 0) d.intrinsicWidth else 256
+                val h = if (d.intrinsicHeight > 0) d.intrinsicHeight else 256
+                val k = 256f / maxOf(w, h)
+                val bw = (w * k).toInt().coerceAtLeast(1)
+                val bh = (h * k).toInt().coerceAtLeast(1)
+                val bmp = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+                d.setBounds(0, 0, bw, bh)
+                d.draw(Canvas(bmp))
+                val bos = java.io.ByteArrayOutputStream()
+                bmp.compress(Bitmap.CompressFormat.PNG, 100, bos)
+                out["yuta_$m"] = "data:image/png;base64," + android.util.Base64.encodeToString(bos.toByteArray(), android.util.Base64.NO_WRAP)
+            } catch (_: Throwable) {
+            }
+        }
+        return out
+    }
+
+    /** Полноценная игра из меню «Игры» (не связана с загрузкой): закрывается кнопкой. */
+    private fun playFree(id: String, title: String) {
+        val dlg = Dialog(this, android.R.style.Theme_Material_Light_NoActionBar_Fullscreen)
+        var host: GameHost? = null
+        dlg.setOnDismissListener { host?.destroy() }
+        val errView = TextView(this).apply { setTextColor(0xFFC62828.toInt()); textSize = 12f }
+        var failures = 0
+        host = GameHost(this, GamePacks.freeHtml(this, id, yutaSprites()), { dlg.dismiss() }) { msg ->
+            if (++failures == 1) errView.text = "JS: $msg"
+        }
+        host?.store = prefs
+        host?.storeId = "free_$id"
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutDirection = View.LAYOUT_DIRECTION_LTR
+            setBackgroundColor(0xFFFFE6F3.toInt())
+            setPadding(dp(8), dp(16), dp(8), dp(8))
+        }
+        box.addView(TextView(this).apply {
+            text = title
+            textSize = 16f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(0xFF4B2E83.toInt())
+            setPadding(dp(4), 0, 0, dp(4))
+        })
+        box.addView(host, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        box.addView(errView)
+        box.addView(button(t("games_close")) { dlg.dismiss() })
+        dlg.setContentView(box)
+        dlg.show()
+    }
+
     private fun showDate() {
         DateSim(
             this, { t(it) }, { text, click -> button(text, click) }, { girlDrawable(it) },
@@ -492,6 +609,18 @@ class MainActivity : Activity() {
             if (kawaii) attachPressEffect(this)
         }
         langRow.addView(settingsButton)
+        val moreButton = TextView(this).apply {
+            text = "\u2022\u2022\u2022"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(if (kawaii) kawaiiText else 0xFFFFFFFF.toInt())
+            background = circleBackground()
+            contentDescription = t("more_title")
+            layoutParams = LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(10) }
+            setOnClickListener { showMoreMenu() }
+            if (kawaii) attachPressEffect(this)
+        }
+        langRow.addView(moreButton)
         headerLeft.addView(langRow)
         header.addView(headerLeft, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
 
@@ -553,13 +682,12 @@ class MainActivity : Activity() {
         urlRow.addView(button(t("clear")) { urlInput.setText("") })
         main.addView(urlRow)
 
-        playlistBox = CheckBox(this).apply {
-            text = t("playlist")
-            isChecked = oldPlaylist
-            tintText(this)
-            if (kawaii) buttonTintList = ColorStateList.valueOf(accent)
-        }
+        playlistBox = toggle(t("playlist"), oldPlaylist)
         main.addView(playlistBox)
+        gifBox = toggle(t("gif_video"), prefs.getBoolean("gif_video", false)) {
+            prefs.edit().putBoolean("gif_video", it).apply()
+        }
+        main.addView(gifBox)
 
         qualitySpinner = Spinner(this).apply {
             adapter = styledAdapter(listOf("FHD (1080p)", "HD (720p)", t("q_max")))
@@ -623,23 +751,15 @@ class MainActivity : Activity() {
         }
         main.addView(statusText)
 
-        val toolsRow = FitRow(this)
+        // эти три кнопки живут в настройках (создаём здесь, чтобы «Обновить» участвовал в блокировке на время загрузки)
         val bUpdate = button(t("update_btn")) { updateYtDlp() }
         val bProxy = button(t("proxy_btn")) { showProxyDialog() }
         val bCookies = button(t("cookies_btn")) { showCookiesDialog() }
-        toolsRow.addView(bUpdate)
-        toolsRow.addView(bProxy)
-        toolsRow.addView(bCookies)
-        main.addView(toolsRow)
         val histRow = FitRow(this)
         histRow.addView(button(t("history_btn")) { tab = 3; refreshHistory(); applyTabFn?.invoke() })
         queueBtn = button(t("q_btn")) { tab = 4; refreshQueue(); applyTabFn?.invoke() }
         histRow.addView(queueBtn)
         main.addView(histRow)
-        val convRow = FitRow(this)
-        convRow.addView(button(t("cv_btn")) { tab = 5; applyTabFn?.invoke() })
-        convRow.addView(button(t("rd_btn")) { tab = 6; applyTabFn?.invoke() })
-        main.addView(convRow)
         updateQueueButton()
 
 
@@ -717,24 +837,20 @@ class MainActivity : Activity() {
         settings.addView(pathRow)
         refreshPath()
 
-        settings.addView(CheckBox(this).apply {
-            text = t("set_game")
-            isChecked = prefs.getBoolean("game_gate", false)
-            tintText(this)
-            if (kawaii) buttonTintList = ColorStateList.valueOf(accent)
-            setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean("game_gate", on).apply() }
+        settings.addView(toggle(t("set_game"), prefs.getBoolean("game_gate", false)) {
+            prefs.edit().putBoolean("game_gate", it).apply()
         })
-        fun check(key: String, pref: String, def: Boolean) = settings.addView(CheckBox(this).apply {
-            text = t(key)
-            isChecked = prefs.getBoolean(pref, def)
-            tintText(this)
-            if (kawaii) buttonTintList = ColorStateList.valueOf(accent)
-            setOnCheckedChangeListener { _, on -> prefs.edit().putBoolean(pref, on).apply() }
-        })
+        fun check(key: String, pref: String, def: Boolean) = settings.addView(
+            toggle(t(key), prefs.getBoolean(pref, def)) { prefs.edit().putBoolean(pref, it).apply() }
+        )
         check("set_clip", "clip_watch", true)
+        val toolsRow = FitRow(this)
+        toolsRow.addView(bUpdate)
+        toolsRow.addView(bProxy)
+        toolsRow.addView(bCookies)
+        settings.addView(toolsRow)
         if (prefs.getBoolean("kawaii_unlocked", false)) {
             settings.addView(button(t("rewards_btn")) { showRewards() })
-            settings.addView(button(t("date_btn")) { showDate() })
         }
         settings.addView(button(t("open_log")) { tab = 1; applyTabFn?.invoke() })
         settings.addView(button(t("dbg_btn")) { dev.open() })
@@ -1180,7 +1296,17 @@ class MainActivity : Activity() {
 
     private fun applySpec(spec: DlSpec, req: YoutubeDLRequest, embed: Boolean) {
         if (spec.kind == "video") {
-            req.addOption("-f", spec.fmt)
+            if (prefs.getBoolean("gif_video", false)) {
+                // GIF считается видео: сначала ищем обычный видеоформат, а если есть только GIF, перекодируем его в mp4
+                req.addOption("-f", spec.fmt.removeSuffix("/best") + "/best[ext!=gif]/best")
+                req.addOption("--recode-video", "mp4")
+                req.addOption(
+                    "--postprocessor-args",
+                    "VideoConvertor:-vf scale=trunc(iw/2)*2:trunc(ih/2)*2 -pix_fmt yuv420p -movflags +faststart"
+                )
+            } else {
+                req.addOption("-f", spec.fmt)
+            }
             req.addOption("--merge-output-format", "mp4")
             if (embed && spec.subs.isNotEmpty()) {
                 req.addOption("--write-subs")
@@ -1236,6 +1362,10 @@ class MainActivity : Activity() {
         clipDialog = AlertDialog.Builder(this)
             .setMessage(t("clip_found") + "\n\n" + url.take(200))
             .setPositiveButton(t("paste")) { _, _ -> urlInput.setText(url) }
+            .setNeutralButton(t("paste_dl")) { _, _ ->
+                urlInput.setText(url)
+                if (engineReady) startAuto() else toast(t("st_starting"))
+            }
             .setNegativeButton(t("cancel"), null)
             .show()
     }
