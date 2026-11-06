@@ -1294,17 +1294,10 @@ class MainActivity : Activity() {
         else -> c.substringBefore('-')
     }
 
-    /** Ссылка, скорее всего, ведёт на гифку (гиф-сайты или адрес .gif/.gifv). */
-    private fun isGifSource(url: String): Boolean {
-        val u = url.lowercase().substringBefore('?')
-        return u.endsWith(".gif") || u.endsWith(".gifv") ||
-            listOf("giphy.", "tenor.", "gfycat.", "redgifs.", "imgur.", "gifer.", "gifs.").any { u.contains(it) }
-    }
-
     private fun applySpec(spec: DlSpec, req: YoutubeDLRequest, embed: Boolean, url: String) {
         if (spec.kind == "video") {
-            if (prefs.getBoolean("gif_video", false) && isGifSource(url)) {
-                // GIF остаётся GIF: берём настоящий gif, а если сайт отдаёт только mp4, переделываем его в gif через ffmpeg
+            if (prefs.getBoolean("gif_video", false)) {
+                // по желанию пользователя любое видео сохраняется как GIF: берём настоящий gif, иначе перекодируем mp4 через ffmpeg
                 req.addOption("-f", "best[ext=gif]/" + spec.fmt)
                 req.addOption("--recode-video", "gif")
                 req.addOption(
