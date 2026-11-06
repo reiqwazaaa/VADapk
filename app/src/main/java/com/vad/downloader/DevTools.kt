@@ -46,9 +46,9 @@ object Sprites {
     val backgrounds = listOf("bg_street", "bg_park", "bg_cafe", "bg_aqua", "bg_fun", "bg_evening")
 
     fun girlSlot(outfit: Int, mood: String): String =
-        "girl_" + "htp"[outfit.coerceIn(0, 2)] + "_" + (if (mood == "happy" || mood == "sad" || mood == "wink") mood else "normal")
+        "girl_" + "htpq"[outfit.coerceIn(0, 3)] + "_" + (if (mood == "happy" || mood == "sad" || mood == "wink") mood else "normal")
 
-    val allSlots: List<String> = (0..2).flatMap { o -> listOf("normal", "happy", "sad", "wink").map { girlSlot(o, it) } } + rooms + backgrounds + listOf("cat_icon")
+    val allSlots: List<String> = (0..3).flatMap { o -> listOf("normal", "happy", "sad", "wink").map { girlSlot(o, it) } } + rooms + backgrounds + listOf("cat_icon")
 
     private fun dir(ctx: Context) = File(ctx.filesDir, "sprites").apply { mkdirs() }
 
@@ -334,12 +334,12 @@ class DevTools(
                 when (w) {
                     0 -> {
                         prefs.edit().putBoolean("kawaii_unlocked", true).putBoolean("outfit_tank", true)
-                            .putBoolean("outfit_pj", true).putInt("wins", maxOf(prefs.getInt("wins", 0), 10)).apply()
+                            .putBoolean("outfit_pj", true).putBoolean("outfit_queen", true).putBoolean("mono_theme", true).putInt("wins", maxOf(prefs.getInt("wins", 0), 10)).apply()
                         toast(t("dbg_done")); rebuild()
                     }
                     1 -> {
                         val e = prefs.edit()
-                        for (k in listOf("outfit_tank", "outfit_pj", "wins", "wins_snake", "wins_maze", "wins_tank", "wins_platformer", "palette", "outfit_cur", "outfit_on")) e.remove(k)
+                        for (k in listOf("outfit_tank", "outfit_pj", "outfit_queen", "mono_theme", "wins", "wins_snake", "wins_maze", "wins_tank", "wins_platformer", "palette", "outfit_cur", "outfit_on")) e.remove(k)
                         e.apply(); toast(t("dbg_done")); rebuild()
                     }
                     2 -> textEditor()

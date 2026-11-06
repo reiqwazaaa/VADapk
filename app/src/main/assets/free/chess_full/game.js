@@ -494,7 +494,7 @@ function afterMove() {
 }
 function endGame(s) {
   over = s; var L = level;
-  if (s === 'win') { stats.w[L]++; say('Ой, ты выиграл(а)! Грустно… но ты молодец!', 'Aw, you won! So sad… but well played!', 'sad', 99); }
+  if (s === 'win') { stats.w[L]++; try { G.save('chess_win', String(L)); } catch (e) {} say('Ой, ты выиграл(а)! Грустно… но ты молодец!', 'Aw, you won! So sad… but well played!', 'sad', 99); }
   else if (s === 'lose') { stats.l[L]++; say('Ура, я выиграла! Мат! Сыграем ещё?', 'Yay, I won! Checkmate! Again?', 'happy', 99); }
   else { stats.d[L]++; say('Ничья! Хорошая партия!', "It's a draw! Nice game!", 'normal', 99); }
   saveStats();

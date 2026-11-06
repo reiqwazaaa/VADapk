@@ -297,6 +297,8 @@ class GameHost(ctx: Context, html: String, private val onFinish: (Boolean) -> Un
     /** Хранилище для G.load / G.save; задаётся сразу после создания, до того как игра успеет запуститься. */
     var store: android.content.SharedPreferences? = null
     var storeId: String = ""
+    /** Вызывается (в главном потоке) после G.save: ключ и значение. */
+    var onSave: ((String, String) -> Unit)? = null
 
     private val web = WebView(ctx)
     private val ui = Handler(Looper.getMainLooper())
@@ -333,6 +335,7 @@ class GameHost(ctx: Context, html: String, private val onFinish: (Boolean) -> Un
             @JavascriptInterface
             fun save(key: String, value: String) {
                 store?.edit()?.putString("gs_${storeId}_${key.take(40)}", value.take(20000))?.apply()
+                onSave?.let { cb -> ui.post { cb(key, value) } }
             }
 
             @JavascriptInterface

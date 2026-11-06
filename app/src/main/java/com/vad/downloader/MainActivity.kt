@@ -129,21 +129,24 @@ class MainActivity : Activity() {
     private var lastQueueUi = 0L
     private class Saved(val name: String, val uri: Uri, val mime: String)
 
-    private class Palette(val key: String, val need: Int, val bg: IntArray, val btn: IntArray, val accent: Int)
+    private class Palette(val key: String, val need: Int, val bg: IntArray, val btn: IntArray, val accent: Int, val flag: String = "")
     private val palettes = listOf(
         Palette("pal_pink", 0, intArrayOf(0xFFFFC1E3.toInt(), 0xFFE0C3FF.toInt(), 0xFFBDE7FF.toInt()), intArrayOf(0xFFFF9ACB.toInt(), 0xFFFFC2E5.toInt()), 0xFFFF5FA2.toInt()),
         Palette("pal_mint", 1, intArrayOf(0xFFC9FFE5.toInt(), 0xFFBDEBFF.toInt(), 0xFFE8FFD0.toInt()), intArrayOf(0xFF5EDDB0.toInt(), 0xFFA8F5D6.toInt()), 0xFF22B58A.toInt()),
         Palette("pal_sunset", 3, intArrayOf(0xFFFFD3A8.toInt(), 0xFFFFB1C1.toInt(), 0xFFE7B6FF.toInt()), intArrayOf(0xFFFF9966.toInt(), 0xFFFFC48A.toInt()), 0xFFFF7043.toInt()),
         Palette("pal_lavender", 5, intArrayOf(0xFFE4D6FF.toInt(), 0xFFCDBDFF.toInt(), 0xFFF7D6FF.toInt()), intArrayOf(0xFFA987F0.toInt(), 0xFFCDB8FF.toInt()), 0xFF8A5CF0.toInt()),
-        Palette("pal_lemon", 10, intArrayOf(0xFFFFF3A8.toInt(), 0xFFFFD6A5.toInt(), 0xFFFFB5D8.toInt()), intArrayOf(0xFFFFC93C.toInt(), 0xFFFFE59A.toInt()), 0xFFFF9F1C.toInt())
+        Palette("pal_lemon", 10, intArrayOf(0xFFFFF3A8.toInt(), 0xFFFFD6A5.toInt(), 0xFFFFB5D8.toInt()), intArrayOf(0xFFFFC93C.toInt(), 0xFFFFE59A.toInt()), 0xFFFF9F1C.toInt()),
+        // монохромная тема: награда за победу над Ютой-тян в шахматах на сложном уровне
+        Palette("pal_mono", 0, intArrayOf(0xFFF4F4F4.toInt(), 0xFFD6D6D6.toInt(), 0xFFFAFAFA.toInt()), intArrayOf(0xFF9E9E9E.toInt(), 0xFFD0D0D0.toInt()), 0xFF212121.toInt(), "mono_theme")
     )
+    private fun palUnlocked(p: Palette) = if (p.flag.isNotEmpty()) prefs.getBoolean(p.flag, false) else wins() >= p.need
     private fun wins() = prefs.getInt("wins", 0)
     private val palette: Palette get() {
         val p = palettes[prefs.getInt("palette", 0).coerceIn(0, palettes.size - 1)]
-        return if (wins() >= p.need) p else palettes[0]
+        return if (palUnlocked(p)) p else palettes[0]
     }
 
-    private val kawaiiText: Int get() = if (night) 0xFFEBDDFF.toInt() else 0xFF6A2C6B.toInt()
+    private val kawaiiText: Int get() = if (night) 0xFFEBDDFF.toInt() else if (palette.flag == "mono_theme") 0xFF222222.toInt() else 0xFF6A2C6B.toInt()
     private val accent: Int get() = if (night) 0xFFB388FF.toInt() else palette.accent
     private val logTextColor: Int get() = if (night) 0xFFD9C9F5.toInt() else 0xFF5A3A78.toInt()
     private val panelColor: Int get() = if (night) 0x1FFFFFFF else 0x99FFFFFF.toInt()
@@ -387,6 +390,7 @@ class MainActivity : Activity() {
         return when {
             cur == 1 && prefs.getBoolean("outfit_tank", false) -> 1
             cur == 2 && prefs.getBoolean("outfit_pj", false) -> 2
+            cur == 3 && prefs.getBoolean("outfit_queen", false) -> 3
             else -> 0
         }
     }
@@ -404,6 +408,12 @@ class MainActivity : Activity() {
             "sad" -> R.drawable.kawaii_girl_sad_pj
             "wink" -> R.drawable.kawaii_girl_wink_pj
             else -> R.drawable.kawaii_girl_pj
+        }
+        3 -> when (mood) {
+            "happy" -> R.drawable.kawaii_girl_happy_queen
+            "sad" -> R.drawable.kawaii_girl_sad_queen
+            "wink" -> R.drawable.kawaii_girl_wink_queen
+            else -> R.drawable.kawaii_girl_queen
         }
         else -> when (mood) {
             "happy" -> R.drawable.kawaii_girl_happy
@@ -427,7 +437,8 @@ class MainActivity : Activity() {
     /** Долгое нажатие: следующий открытый наряд по кругу. */
     private fun nextOutfit() {
         val open = listOf(0) + (if (prefs.getBoolean("outfit_tank", false)) listOf(1) else emptyList()) +
-            (if (prefs.getBoolean("outfit_pj", false)) listOf(2) else emptyList())
+            (if (prefs.getBoolean("outfit_pj", false)) listOf(2) else emptyList()) +
+            (if (prefs.getBoolean("outfit_queen", false)) listOf(3) else emptyList())
         if (open.size == 1) {
             toast(t("outfit_locked"))
             return
@@ -435,7 +446,7 @@ class MainActivity : Activity() {
         val next = open[(open.indexOf(outfit()) + 1) % open.size]
         prefs.edit().putInt("outfit_cur", next).apply()
         setMood("normal")
-        toast(t(when (next) { 1 -> "outfit_on"; 2 -> "outfit_pj"; else -> "outfit_off" }))
+        toast(t(when (next) { 1 -> "outfit_on"; 2 -> "outfit_pj"; 3 -> "outfit_queen"; else -> "outfit_off" }))
     }
 
     /** Меню «⋯»: игры, читалка, конвертер и (если открыт няшный режим) Юта-тян. */
@@ -519,6 +530,16 @@ class MainActivity : Activity() {
         }
         host?.store = prefs
         host?.storeId = "free_$id"
+        if (id == "chess_full") host?.onSave = { key, value ->
+            // победа над Ютой-тян: средний уровень открывает костюм, сложный ещё и монохромную тему
+            val lv = if (key == "chess_win") value.toIntOrNull() ?: -1 else -1
+            if (lv >= 1 && !prefs.getBoolean("outfit_queen", false)) {
+                prefs.edit().putBoolean("outfit_queen", true).apply(); toast(t("rw_queen"))
+            }
+            if (lv >= 2 && !prefs.getBoolean("mono_theme", false)) {
+                prefs.edit().putBoolean("mono_theme", true).apply(); toast(t("rw_mono"))
+            }
+        }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutDirection = View.LAYOUT_DIRECTION_LTR
@@ -1504,16 +1525,16 @@ class MainActivity : Activity() {
         val w = wins()
         val items = palettes.map { p ->
             val name = t(p.key)
-            if (w >= p.need) "\u2713 $name" else "\uD83D\uDD12 $name (${f("rw_locked", p.need)})"
+            if (palUnlocked(p)) "\u2713 $name" else "\uD83D\uDD12 $name (${if (p.flag.isNotEmpty()) t("rw_locked_mono") else f("rw_locked", p.need)})"
         }
         AlertDialog.Builder(this)
             .setTitle(f("rw_wins", w))
             .setItems(items.toTypedArray()) { _, which ->
-                if (w >= palettes[which].need) {
+                if (palUnlocked(palettes[which])) {
                     prefs.edit().putInt("palette", which).apply()
                     Handler(Looper.getMainLooper()).post { buildUi() }
                 } else {
-                    toast(f("rw_locked", palettes[which].need))
+                    toast(if (palettes[which].flag.isNotEmpty()) t("rw_locked_mono") else f("rw_locked", palettes[which].need))
                 }
             }
             .setNegativeButton(t("back"), null)
@@ -1523,7 +1544,7 @@ class MainActivity : Activity() {
     private fun registerWin(kind: String) {
         val before = wins()
         prefs.edit().putInt("wins", before + 1).putInt("wins_$kind", prefs.getInt("wins_$kind", 0) + 1).apply()
-        val fresh = palettes.firstOrNull { it.need in (before + 1)..(before + 1) }
+        val fresh = palettes.firstOrNull { it.flag.isEmpty() && it.need in (before + 1)..(before + 1) }
         if (fresh != null && prefs.getBoolean("kawaii_unlocked", false)) toast(f("rw_new", t(fresh.key)))
     }
 
