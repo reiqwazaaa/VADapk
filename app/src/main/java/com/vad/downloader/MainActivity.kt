@@ -1294,19 +1294,25 @@ class MainActivity : Activity() {
         else -> c.substringBefore('-')
     }
 
-    private fun applySpec(spec: DlSpec, req: YoutubeDLRequest, embed: Boolean) {
+    /** Ссылка, скорее всего, ведёт на гифку (гиф-сайты или адрес .gif/.gifv). */
+    private fun isGifSource(url: String): Boolean {
+        val u = url.lowercase().substringBefore('?')
+        return u.endsWith(".gif") || u.endsWith(".gifv") ||
+            listOf("giphy.", "tenor.", "gfycat.", "redgifs.", "imgur.", "gifer.", "gifs.").any { u.contains(it) }
+    }
+
+    private fun applySpec(spec: DlSpec, req: YoutubeDLRequest, embed: Boolean, url: String) {
         if (spec.kind == "video") {
-            if (prefs.getBoolean("gif_video", false)) {
-                // GIF считается видео: сначала ищем обычный видеоформат, а если есть только GIF, перекодируем его в mp4
-                req.addOption("-f", spec.fmt.removeSuffix("/best") + "/best[ext!=gif]/best")
-                req.addOption("--recode-video", "mp4")
+            if (prefs.getBoolean("gif_video", false) && isGifSource(url)) {
+                // GIF остаётся GIF: берём настоящий gif, а если сайт отдаёт только mp4, переделываем его в gif через ffmpeg
+                req.addOption("-f", "best[ext=gif]/" + spec.fmt)
+                req.addOption("--recode-video", "gif")
                 req.addOption(
                     "--postprocessor-args",
-                    "VideoConvertor:-vf scale=trunc(iw/2)*2:trunc(ih/2)*2 -pix_fmt yuv420p -movflags +faststart"
+                    "VideoConvertor:-vf fps=15,scale=480:-2:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse -loop 0"
                 )
             } else {
-                // GIF остаётся GIF: если у ссылки есть настоящий gif-формат, берём его, иначе обычный выбор качества
-                req.addOption("-f", "best[ext=gif]/" + spec.fmt)
+                req.addOption("-f", spec.fmt)
             }
             req.addOption("--merge-output-format", "mp4")
             if (embed && spec.subs.isNotEmpty()) {
@@ -1880,7 +1886,7 @@ class MainActivity : Activity() {
                     while (true) {
                     try {
                         val req = baseRequest(url, playlist)
-                        applySpec(spec, req, embed)
+                        applySpec(spec, req, embed, url)
                         req.addOption("--newline")
                         val template = if (playlist)
                             "${tmp.absolutePath}/%(playlist_title|PlayList)s/%(playlist_index)s - %(title).120s [%(id)s].%(ext)s"
