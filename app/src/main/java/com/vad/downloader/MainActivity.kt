@@ -1305,7 +1305,8 @@ class MainActivity : Activity() {
                     "VideoConvertor:-vf scale=trunc(iw/2)*2:trunc(ih/2)*2 -pix_fmt yuv420p -movflags +faststart"
                 )
             } else {
-                req.addOption("-f", spec.fmt)
+                // GIF остаётся GIF: если у ссылки есть настоящий gif-формат, берём его, иначе обычный выбор качества
+                req.addOption("-f", "best[ext=gif]/" + spec.fmt)
             }
             req.addOption("--merge-output-format", "mp4")
             if (embed && spec.subs.isNotEmpty()) {
