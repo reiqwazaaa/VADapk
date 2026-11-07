@@ -969,7 +969,36 @@ class MainActivity : Activity() {
         return super.onKeyDown(keyCode, event)
     }
 
+    /** «Открыть с помощью VAD»: аудио/видео уходят в конвертер, остальное в читалку; гифки и webp спрашиваем. */
+    private fun handleViewIntent(i: Intent) {
+        val u = i.data ?: return
+        val name = try {
+            contentResolver.query(u, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        } catch (_: Throwable) { null } ?: (u.lastPathSegment ?: "")
+        val ext = name.substringAfterLast('.', "").lowercase()
+        val type = (i.type ?: "").lowercase()
+        val media = type.startsWith("audio/") || type.startsWith("video/") || type == "application/ogg" ||
+            ext in setOf("mp3", "flac", "ogg", "opus", "m4a", "aac", "wma", "wav", "mp4", "mkv", "webm", "avi", "mov")
+        val ambiguous = ext == "gif" || ext == "webp" || type == "image/gif" || type == "image/webp"
+        val toConverter = { tab = 5; applyTabFn?.invoke(); conv.onPicked(i) }
+        val toReader = { tab = 6; applyTabFn?.invoke(); reader.onFilePicked(i) }
+        when {
+            ambiguous -> AlertDialog.Builder(this)
+                .setTitle(t("open_choose"))
+                .setItems(arrayOf(t("rd_btn"), t("cv_btn"))) { _, w -> if (w == 0) toReader() else toConverter() }
+                .show()
+            media -> toConverter()
+            else -> toReader()
+        }
+    }
+
     private fun handleShareIntent(i: Intent?) {
+        if (i?.action == Intent.ACTION_VIEW && i.data != null && i.data?.scheme != "http" && i.data?.scheme != "https") {
+            handleViewIntent(i)
+            return
+        }
         if (i?.action == Intent.ACTION_SEND && i.type == "text/plain") {
             val text = i.getStringExtra(Intent.EXTRA_TEXT) ?: return
             val link = Regex("https?://\\S+").find(text)?.value ?: text
