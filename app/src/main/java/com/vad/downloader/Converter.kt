@@ -62,6 +62,18 @@ class Converter(
         Fmt("mp4", 1, "MP4"), Fmt("mkv", 1, "MKV"), Fmt("webm", 1, "WEBM"), Fmt("avi", 1, "AVI"), Fmt("mov", 1, "MOV"),
         Fmt("gif", 2, "GIF"), Fmt("webp", 2, "WEBP")
     )
+    private class CvPreset(val key: String, val ext: String, val q: Int, val res: Int)
+    // q: для звука индекс битрейта (128/192/256/320), для видео 0 высокое .. 3 минимальное; res: индекс высоты
+    private val cvPresets = listOf(
+        CvPreset("cp_custom", "", 0, 0),
+        CvPreset("cp_wa", "mp4", 1, 2),
+        CvPreset("cp_small", "mp4", 2, 3),
+        CvPreset("cp_tg_voice", "opus", 0, 0),
+        CvPreset("cp_car", "mp3", 1, 0),
+        CvPreset("cp_phone", "m4a", 1, 0),
+        CvPreset("cp_hq", "flac", 0, 0),
+        CvPreset("cp_gif", "gif", 1, 3)
+    )
     private val heights = intArrayOf(0, 1080, 720, 480, 360)
     private val bitrates = intArrayOf(128, 192, 256, 320)
 
@@ -105,6 +117,17 @@ class Converter(
         filesView = TextView(act).apply { tint(this); setPadding(0, dp(6), 0, dp(6)) }
         body.addView(filesView)
 
+        body.addView(TextView(act).apply { text = t("cv_preset"); tint(this) })
+        body.addView(Spinner(act).apply {
+            adapter = this@Converter.adapter(cvPresets.map { t(it.key) })
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    if (pos > 0) applyPreset(cvPresets[pos])
+                }
+
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+        })
         body.addView(TextView(act).apply { text = t("cv_format"); tint(this) })
         val fmtLabels = fmts.map { it.label + " (" + t(kindKey(it.kind)) + ")" }
         fmtSpinner = Spinner(act).apply {
@@ -170,6 +193,16 @@ class Converter(
         refreshFiles()
         updateButtons()
         return pane
+    }
+
+    /** Пресет сразу выставляет формат, качество и разрешение; их можно потом поменять вручную. */
+    private fun applyPreset(p: CvPreset) {
+        val fi = fmts.indexOfFirst { it.ext == p.ext }
+        if (fi < 0) return
+        prefs.edit().putInt("cv_fmt", fi).putInt("cv_q", p.q).putInt("cv_res", p.res).apply()
+        fmtSpinner?.setSelection(fi)
+        fillQuality(fmts[fi])
+        resSpinner?.setSelection(p.res)
     }
 
     private fun kindKey(kind: Int) = when (kind) { 0 -> "cv_audio"; 1 -> "cv_video"; else -> "cv_anim" }

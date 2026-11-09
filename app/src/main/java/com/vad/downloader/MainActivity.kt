@@ -108,7 +108,19 @@ class MainActivity : Activity() {
     private lateinit var historyList: LinearLayout
     private val audioLabels = listOf("MP3 (best)", "MP3 320k", "MP3 192k", "MP3 128k", "M4A (AAC)", "Opus", "FLAC", "WAV")
     private val audioCodes = listOf("mp3:0", "mp3:320K", "mp3:192K", "mp3:128K", "m4a", "opus", "flac", "wav")
-    private class DlSpec(val kind: String, val fmt: String, val afmt: String, val subs: String = "")
+    private class DlSpec(
+        val kind: String, val fmt: String, val afmt: String, val subs: String = "",
+        val gif: Boolean = false, val gifW: Int = 480, val gifFps: Int = 15,
+        val trimFrom: String = "", val trimTo: String = "", val extra: String = ""
+    )
+
+    private fun specToJson(s: DlSpec): JSONObject = JSONObject().put("kind", s.kind).put("fmt", s.fmt).put("afmt", s.afmt).put("subs", s.subs)
+        .put("gif", s.gif).put("gifW", s.gifW).put("gifFps", s.gifFps).put("trimFrom", s.trimFrom).put("trimTo", s.trimTo).put("extra", s.extra)
+
+    private fun specFromJson(o: JSONObject) = DlSpec(
+        o.optString("kind", "video"), o.optString("fmt"), o.optString("afmt"), o.optString("subs"),
+        o.optBoolean("gif"), o.optInt("gifW", 480), o.optInt("gifFps", 15), o.optString("trimFrom"), o.optString("trimTo"), o.optString("extra")
+    )
     private val subLabelKeys = listOf("sub_none", "sub_embed", "sub_file")
     private val subCodes = listOf("", "embed", "file")
     private lateinit var subsSpinner: Spinner
@@ -461,6 +473,7 @@ class MainActivity : Activity() {
             box.addView(button(label) { dlg?.dismiss(); action() })
         }
         item(t("more_games")) { showGames() }
+        item(t("subs_btn")) { showSubs() }
         item(t("rd_btn")) { tab = 6; applyTabFn?.invoke() }
         item(t("cv_btn")) { tab = 5; applyTabFn?.invoke() }
         if (prefs.getBoolean("kawaii_unlocked", false)) item(t("date_btn")) { showDate() }
@@ -577,6 +590,8 @@ class MainActivity : Activity() {
         val first = !::urlInput.isInitialized
         val oldUrl = if (first) "" else urlInput.text.toString()
         val oldPlaylist = if (first) false else playlistBox.isChecked
+        val oldTrimA = if (first) "" else trimFromEt.text.toString()
+        val oldTrimB = if (first) "" else trimToEt.text.toString()
         val oldQuality = if (first) 0 else qualitySpinner.selectedItemPosition
         val oldProgress = if (first) 0 else progressBar.progress
         val oldStatus = if (first) null else statusText.text.toString()
@@ -709,15 +724,10 @@ class MainActivity : Activity() {
         gifBox = toggle(t("gif_video"), prefs.getBoolean("gif_video", false)) {
             prefs.edit().putBoolean("gif_video", it).apply()
         }
-        main.addView(gifBox)
-
         qualitySpinner = Spinner(this).apply {
             adapter = styledAdapter(listOf("FHD (1080p)", "HD (720p)", t("q_max")))
             setSelection(oldQuality)
         }
-        main.addView(TextView(this).apply { text = t("quality_label"); tintText(this) })
-        main.addView(qualitySpinner)
-        main.addView(TextView(this).apply { text = t("audio_fmt_label"); tintText(this) })
         audioSpinner = Spinner(this).apply {
             adapter = styledAdapter(audioLabels)
             setSelection(prefs.getInt("audio_pos", 0).coerceIn(0, audioLabels.size - 1))
@@ -729,8 +739,6 @@ class MainActivity : Activity() {
                 override fun onNothingSelected(p: AdapterView<*>?) {}
             }
         }
-        main.addView(audioSpinner)
-        main.addView(TextView(this).apply { text = t("sub_label"); tintText(this) })
         subsSpinner = Spinner(this).apply {
             adapter = styledAdapter(subLabelKeys.map { t(it) })
             setSelection(prefs.getInt("subs_pos", 0).coerceIn(0, subCodes.size - 1))
@@ -742,15 +750,51 @@ class MainActivity : Activity() {
                 override fun onNothingSelected(p: AdapterView<*>?) {}
             }
         }
-        main.addView(subsSpinner)
+        presetSpinner = Spinner(this).apply {
+            adapter = styledAdapter(DlPresets.all.map { t(it.key) })
+            setSelection(prefs.getInt("preset_pos", 0).coerceIn(0, DlPresets.all.size - 1))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                    prefs.edit().putInt("preset_pos", pos).apply()
+                }
+
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+        }
+        if (classicUi) {
+            main.addView(gifBox)
+            main.addView(TextView(this).apply { text = t("quality_label"); tintText(this) })
+            main.addView(qualitySpinner)
+            main.addView(TextView(this).apply { text = t("audio_fmt_label"); tintText(this) })
+            main.addView(audioSpinner)
+            main.addView(TextView(this).apply { text = t("sub_label"); tintText(this) })
+            main.addView(subsSpinner)
+        } else {
+            main.addView(TextView(this).apply { text = t("pr_label"); tintText(this) })
+            main.addView(presetSpinner)
+        }
+        // обрезка: по желанию, для видео и звука
+        main.addView(TextView(this).apply { text = t("trim_label"); tintText(this) })
+        trimFromEt = EditText(this).apply {
+            hint = t("trim_from"); setText(oldTrimA); setSingleLine(); inputType = android.text.InputType.TYPE_CLASS_TEXT
+            if (kawaii) { setTextColor(kawaiiText); setHintTextColor(kawaiiText and 0x00FFFFFF or 0x88000000.toInt()) }
+        }
+        trimToEt = EditText(this).apply {
+            hint = t("trim_to"); setText(oldTrimB); setSingleLine(); inputType = android.text.InputType.TYPE_CLASS_TEXT
+            if (kawaii) { setTextColor(kawaiiText); setHintTextColor(kawaiiText and 0x00FFFFFF or 0x88000000.toInt()) }
+        }
+        val trimRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        trimRow.addView(trimFromEt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        trimRow.addView(trimToEt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        main.addView(trimRow)
 
         // --- кнопки действий ---
-        val bAuto = button(t("dl_auto")) { startAuto() }
+        val bAuto = button(if (classicUi) t("dl_auto") else t("dl_go")) { startAuto() }
         val bPick = button(t("dl_pick")) { startPickFormat() }
         val bMp3 = button(t("dl_audio")) { startMp3() }
         main.addView(bAuto)
         main.addView(bPick)
-        main.addView(bMp3)
+        if (classicUi) main.addView(bMp3)
 
         cancelButton = button(t("cancel")) { cancelDownload() }
         main.addView(cancelButton)
@@ -867,6 +911,30 @@ class MainActivity : Activity() {
             toggle(t(key), prefs.getBoolean(pref, def)) { prefs.edit().putBoolean(pref, it).apply() }
         )
         check("set_clip", "clip_watch", true)
+        check("sub_auto", "subs_auto", true)
+        settings.addView(toggle(t("classic_ui"), prefs.getBoolean("classic_ui", false)) {
+            prefs.edit().putBoolean("classic_ui", it).apply()
+            Handler(Looper.getMainLooper()).post { buildUi() }
+        })
+        settings.addView(TextView(this).apply { text = t("gif_size"); tintText(this); setPadding(dp(4), dp(8), dp(4), 0) })
+        val gifRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        gifRow.addView(Spinner(this).apply {
+            adapter = styledAdapter(gifWidths.map { if (it == 0) t("gif_orig") else "$it px" })
+            setSelection(prefs.getInt("gif_w_pos", 2).coerceIn(0, gifWidths.size - 1))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) { prefs.edit().putInt("gif_w_pos", pos).apply() }
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        gifRow.addView(Spinner(this).apply {
+            adapter = styledAdapter(gifFpsList.map { "$it ${t("gif_fps")}" })
+            setSelection(prefs.getInt("gif_fps_pos", 1).coerceIn(0, gifFpsList.size - 1))
+            onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(p: AdapterView<*>?, v: View?, pos: Int, id: Long) { prefs.edit().putInt("gif_fps_pos", pos).apply() }
+                override fun onNothingSelected(p: AdapterView<*>?) {}
+            }
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        settings.addView(gifRow)
         val toolsRow = FitRow(this)
         toolsRow.addView(bUpdate)
         toolsRow.addView(bProxy)
@@ -1132,7 +1200,7 @@ class MainActivity : Activity() {
                 }
                 setStatus(t("st_ready"))
                 setBusy(false)
-                runOnUiThread { offerResume() }
+                runOnUiThread { offerResume(); autoCheckSubs() }
             } catch (e: Throwable) {
                 setStatus(t("st_init_fail"))
                 log(f("log_init_fail", e.message))
@@ -1199,6 +1267,106 @@ class MainActivity : Activity() {
             }
             .setNegativeButton(t("cancel"), null)
             .show()
+    }
+
+    // ------------------------------------------------------ Подписки
+
+    private fun loadSubs(): MutableList<Sub> = try {
+        val a = JSONArray(prefs.getString("subs", "[]"))
+        (0 until a.length()).map { Sub.from(a.getJSONObject(it)) }.toMutableList()
+    } catch (_: Throwable) { mutableListOf() }
+
+    private fun saveSubs(l: List<Sub>) {
+        val a = JSONArray(); l.forEach { a.put(it.toJson()) }
+        prefs.edit().putString("subs", a.toString()).apply()
+    }
+
+    private fun subDir() = File(filesDir, "subs").apply { mkdirs() }
+
+    /** Ставит в очередь проверку подписки: yt-dlp сам пропускает уже скачанное (архив) и останавливается на первом знакомом видео. */
+    private fun checkSub(sub: Sub, all: MutableList<Sub>) {
+        val base = specFromJson(sub.spec)
+        val ex = ArrayList<String>()
+        ex += listOf("--download-archive", File(subDir(), sub.id + ".txt").absolutePath)
+        if (sub.mode == "new") {
+            ex += listOf("--dateafter", sub.since, "--break-on-reject", "--break-on-existing", "--playlist-end", "50")
+        } else if (sub.first) {
+            ex += listOf("--playlist-end", sub.n.toString())
+        } else {
+            ex += listOf("--break-on-existing", "--playlist-end", "30")
+        }
+        val spec = DlSpec(base.kind, base.fmt, base.afmt, base.subs, base.gif, base.gifW, base.gifFps, "", "", ex.joinToString("\n"))
+        enqueue(listOf(sub.url), true, spec)
+        sub.first = false
+        sub.last = System.currentTimeMillis()
+        saveSubs(all)
+    }
+
+    private fun checkAllSubs(auto: Boolean) {
+        val all = loadSubs()
+        if (all.isEmpty()) return
+        if (!engineReady) { toast(t("st_starting")); return }
+        toast(f("sub_checking", all.size))
+        all.forEach { checkSub(it, all) }
+        if (auto) prefs.edit().putLong("subs_last_auto", System.currentTimeMillis()).apply()
+    }
+
+    private fun autoCheckSubs() {
+        if (!prefs.getBoolean("subs_auto", true) || prefs.getString("pending", null) != null) return
+        if (System.currentTimeMillis() - prefs.getLong("subs_last_auto", 0L) < 6L * 3600 * 1000) return
+        checkAllSubs(true)
+    }
+
+    private fun addSubFromField() {
+        val url = currentUrl() ?: run { toast(t("sub_need_url")); return }
+        val spec = currentSpec(false) ?: return
+        val modes = arrayOf(t("sub_mode_new"), f("sub_mode_last", 3), f("sub_mode_last", 10))
+        AlertDialog.Builder(this)
+            .setTitle(t("sub_mode_title"))
+            .setItems(modes) { _, w ->
+                val all = loadSubs()
+                val today = java.text.SimpleDateFormat("yyyyMMdd", java.util.Locale.US).format(java.util.Date())
+                val name = url.removePrefix("https://").removePrefix("http://").removePrefix("www.").take(70)
+                all.add(Sub(System.currentTimeMillis().toString(), url, name, if (w == 0) "new" else "last", if (w == 2) 10 else 3, today, true, 0L, specToJson(spec)))
+                saveSubs(all)
+                toast(t("sub_added"))
+            }
+            .setNegativeButton(t("cancel"), null)
+            .show()
+    }
+
+    private fun showSubs() {
+        val all = loadSubs()
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8)) }
+        if (all.isEmpty()) box.addView(TextView(this).apply { text = t("subs_empty") })
+        val fmt = java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.getDefault())
+        lateinit var dlg: AlertDialog
+        for (sub in all) {
+            box.addView(TextView(this).apply {
+                text = sub.name + "\n" + (if (sub.last == 0L) t("sub_never") else f("sub_last", fmt.format(java.util.Date(sub.last))))
+                setPadding(dp(8), dp(10), dp(8), dp(10))
+                setBackgroundColor(0x22888888)
+                setOnClickListener {
+                    AlertDialog.Builder(this@MainActivity)
+                        .setTitle(sub.name)
+                        .setItems(arrayOf(t("sub_check_now"), t("sub_delete"))) { _, w ->
+                            if (w == 0) { if (engineReady) { checkSub(sub, all); toast(f("sub_checking", 1)) } else toast(t("st_starting")) }
+                            else { all.remove(sub); saveSubs(all); File(subDir(), sub.id + ".txt").delete(); toast(t("sub_removed")) }
+                            dlg.dismiss()
+                        }
+                        .setNegativeButton(t("cancel"), null)
+                        .show()
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) })
+        }
+        dlg = AlertDialog.Builder(this)
+            .setTitle(t("subs_btn"))
+            .setView(ScrollView(this).apply { addView(box) })
+            .setPositiveButton(t("subs_check_all")) { _, _ -> checkAllSubs(false) }
+            .setNeutralButton(t("subs_add")) { _, _ -> addSubFromField() }
+            .setNegativeButton(t("subs_close"), null)
+            .create()
+        dlg.show()
     }
 
     // ------------------------------------------------------ Память телефона
@@ -1418,15 +1586,47 @@ class MainActivity : Activity() {
         return req
     }
 
+    private val classicUi: Boolean get() = prefs.getBoolean("classic_ui", false)
+    private val gifWidths = intArrayOf(240, 320, 480, 640, 0)
+    private val gifFpsList = intArrayOf(10, 15, 20)
+    private fun gifW() = gifWidths[prefs.getInt("gif_w_pos", 2).coerceIn(0, gifWidths.size - 1)]
+    private fun gifFps() = gifFpsList[prefs.getInt("gif_fps_pos", 1).coerceIn(0, gifFpsList.size - 1)]
+    private val timeRe = Regex("^\\d+(:\\d{1,2}){0,2}(\\.\\d+)?$")
+    private lateinit var trimFromEt: EditText
+    private lateinit var trimToEt: EditText
+    private lateinit var presetSpinner: Spinner
+
+    private fun toSec(s: String): Double = s.split(":").fold(0.0) { acc, p -> acc * 60 + p.toDouble() }
+
+    /** Читает поля обрезки; при ошибке показывает подсказку и возвращает null. */
+    private fun readTrim(): Pair<String, String>? {
+        val a = trimFromEt.text.toString().trim()
+        val b = trimToEt.text.toString().trim()
+        if ((a.isNotEmpty() && !timeRe.matches(a)) || (b.isNotEmpty() && !timeRe.matches(b))) { toast(t("trim_bad")); return null }
+        if (a.isNotEmpty() && b.isNotEmpty() && toSec(b) <= toSec(a)) { toast(t("trim_order")); return null }
+        return a to b
+    }
+
+    /** Что сейчас выбрано на главном экране: пресет или классические списки. */
+    private fun currentSpec(withTrim: Boolean = true): DlSpec? {
+        val (a, b) = if (withTrim) (readTrim() ?: return null) else ("" to "")
+        if (!classicUi) {
+            val p = DlPresets.all[presetSpinner.selectedItemPosition.coerceIn(0, DlPresets.all.size - 1)]
+            return DlSpec(p.kind, p.fmt, p.afmt, p.subs, p.gif, gifW(), gifFps(), a, b)
+        }
+        return DlSpec("video", qualityFormat(), "", subCode(), gifBox.isChecked, gifW(), gifFps(), a, b)
+    }
+
     private fun startAuto() {
         val urls = currentUrls() ?: return
-        val spec = DlSpec("video", qualityFormat(), "", subCode())
+        val spec = currentSpec() ?: return
         runDownload(urls, playlistBox.isChecked, spec)
     }
 
     private fun startMp3() {
         val urls = currentUrls() ?: return
-        val spec = DlSpec("audio", "", audioCodes[audioSpinner.selectedItemPosition.coerceIn(0, audioCodes.size - 1)])
+        val (a, b) = readTrim() ?: return
+        val spec = DlSpec("audio", "", audioCodes[audioSpinner.selectedItemPosition.coerceIn(0, audioCodes.size - 1)], trimFrom = a, trimTo = b)
         runDownload(urls, playlistBox.isChecked, spec)
     }
 
@@ -1440,14 +1640,28 @@ class MainActivity : Activity() {
     }
 
     private fun applySpec(spec: DlSpec, req: YoutubeDLRequest, embed: Boolean, url: String) {
+        // обрезка: скачиваем только нужный кусок (точные границы по ключевым кадрам)
+        if (spec.trimFrom.isNotEmpty() || spec.trimTo.isNotEmpty()) {
+            req.addOption("--download-sections", "*" + spec.trimFrom.ifEmpty { "0" } + "-" + spec.trimTo.ifEmpty { "inf" })
+            req.addOption("--force-keyframes-at-cuts")
+        }
+        // дополнительные ключи (подписки: архив и ограничения)
+        if (spec.extra.isNotEmpty()) {
+            val tk = spec.extra.split("\n").filter { it.isNotEmpty() }
+            var i = 0
+            while (i < tk.size) {
+                if (i + 1 < tk.size && !tk[i + 1].startsWith("--")) { req.addOption(tk[i], tk[i + 1]); i += 2 } else { req.addOption(tk[i]); i++ }
+            }
+        }
         if (spec.kind == "video") {
-            if (prefs.getBoolean("gif_video", false)) {
-                // по желанию пользователя любое видео сохраняется как GIF: берём настоящий gif, иначе перекодируем mp4 через ffmpeg
+            if (spec.gif) {
+                // «Скачать как GIF»: берём настоящий gif, а если его нет (например, Твиттер отдаёт mp4), переделываем видео в gif через ffmpeg
                 req.addOption("-f", "best[ext=gif]/" + spec.fmt)
                 req.addOption("--recode-video", "gif")
+                val scale = if (spec.gifW > 0) ",scale=${spec.gifW}:-2:flags=lanczos" else ""
                 req.addOption(
                     "--postprocessor-args",
-                    "VideoConvertor:-vf fps=15,scale=480:-2:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse -loop 0"
+                    "VideoConvertor:-vf fps=${spec.gifFps}$scale,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse -loop 0"
                 )
             } else {
                 req.addOption("-f", spec.fmt)
@@ -1531,10 +1745,7 @@ class MainActivity : Activity() {
         val o = JSONObject()
         o.put("urls", JSONArray(urls))
         o.put("playlist", playlist)
-        o.put("kind", spec.kind)
-        o.put("fmt", spec.fmt)
-        o.put("afmt", spec.afmt)
-        o.put("subs", spec.subs)
+        o.put("spec", specToJson(spec))
         prefs.edit().putString("pending", o.toString()).apply()
     }
 
@@ -1545,7 +1756,7 @@ class MainActivity : Activity() {
             val o = JSONObject(raw)
             val arr = o.getJSONArray("urls")
             val urls = (0 until arr.length()).map { arr.getString(it) }
-            val spec = DlSpec(o.getString("kind"), o.optString("fmt"), o.optString("afmt"), o.optString("subs"))
+            val spec = specFromJson(o.optJSONObject("spec") ?: o)
             val playlist = o.optBoolean("playlist")
             AlertDialog.Builder(this)
                 .setMessage(t("resume_q") + "\n\n" + urls.first().take(120) + if (urls.size > 1) "\n(+${urls.size - 1})" else "")
@@ -1729,7 +1940,7 @@ class MainActivity : Activity() {
                 }
             } catch (e: Throwable) {
                 log(f("log_error", e.message))
-                setStatus(t("st_formats_fail"))
+                setStatus(ErrorHints.key(e.message.orEmpty())?.let { t(it) } ?: t("st_formats_fail"))
                 setBusy(false)
             }
         }.start()
@@ -1763,7 +1974,8 @@ class MainActivity : Activity() {
     }
 
     private fun downloadFormat(url: String, playlist: Boolean, fmt: String) {
-        runDownload(listOf(url), playlist, DlSpec("video", fmt, "", subCode()))
+        val (ta, tb) = readTrim() ?: return
+        runDownload(listOf(url), playlist, DlSpec("video", fmt, "", subCode(), trimFrom = ta, trimTo = tb))
     }
 
     private fun cancelDownload() {
@@ -2087,18 +2299,10 @@ class MainActivity : Activity() {
                         failed++
                         lastError = m
                         log(f("log_error", m))
-                        val members = m.contains("members-only", true) || m.contains("members only", true) ||
-                            m.contains("channel's members", true) || m.contains("Join this channel", true)
-                        val priv = m.contains("private video", true) || m.contains("confirm your age", true) ||
-                            m.contains("age-restricted", true)
-                        if (members) {
-                            friendly = t("err_members")
+                        val hk = ErrorHints.key(m)
+                        if (hk != null) {
+                            friendly = t(hk)
                             log(friendly)
-                        } else if (priv) {
-                            friendly = t("err_private")
-                            log(friendly)
-                        } else if (m.contains("sign in", true) || m.contains("Precondition", true)) {
-                            log(t("log_hint_signin"))
                         }
                         break
                     }
