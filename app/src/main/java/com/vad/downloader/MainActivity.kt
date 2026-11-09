@@ -25,6 +25,7 @@ import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
@@ -857,6 +858,7 @@ class MainActivity : Activity() {
         })
         settings.addView(pathRow)
         refreshPath()
+        settings.addView(buildMemoryCard())
 
         settings.addView(toggle(t("set_game"), prefs.getBoolean("game_gate", false)) {
             prefs.edit().putBoolean("game_gate", it).apply()
@@ -940,6 +942,7 @@ class MainActivity : Activity() {
             header.visibility = if (full) View.GONE else View.VISIBLE
             if (full) root.setPadding(0, 0, 0, 0) else root.setPadding(dp(16), dp(24), dp(16), dp(16))
             if (tab == 1) logScroll.post { logScroll.fullScroll(View.FOCUS_DOWN) }
+            if (tab == 2) refreshMemory()
         }
         root.addView(content, LinearLayout.LayoutParams(matchBoth, 0, 1f))
         applyTabFn?.invoke()
@@ -1196,6 +1199,98 @@ class MainActivity : Activity() {
             }
             .setNegativeButton(t("cancel"), null)
             .show()
+    }
+
+    // ------------------------------------------------------ Память телефона
+
+    private var memBar: StorageBar? = null
+    private var memText: TextView? = null
+
+    private fun buildMemoryCard(): View {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(4), dp(10), dp(4), dp(6))
+        }
+        box.addView(TextView(this).apply {
+            text = t("mem_title"); setTypeface(typeface, Typeface.BOLD); tintText(this)
+        })
+        val bar = StorageBar(this).apply { accent = this@MainActivity.accent }
+        box.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(6); bottomMargin = dp(6)
+        })
+        val txt = TextView(this).apply { textSize = 12f; tintText(this); text = t("mem_loading") }
+        box.addView(txt)
+        memBar = bar
+        memText = txt
+        return box
+    }
+
+    /** Считает память в фоне: всего/занято по StatFs, папка VAD по MediaStore и (если выбрана) по выбранной папке. */
+    private fun refreshMemory() {
+        val bar = memBar ?: return
+        val txt = memText ?: return
+        Thread {
+            try {
+                val st = android.os.StatFs(Environment.getExternalStorageDirectory().path)
+                val total = st.totalBytes
+                val free = st.availableBytes
+                val used = (total - free).coerceAtLeast(0)
+                val vad = vadFolderSize()
+                runOnUiThread {
+                    bar.accent = accent
+                    bar.set(total, used, vad)
+                    fun sz(b: Long) = android.text.format.Formatter.formatFileSize(this, b)
+                    val sb = android.text.SpannableStringBuilder()
+                    fun dot(color: Int, label: String, value: String) {
+                        val start = sb.length
+                        sb.append("\u25CF ")
+                        sb.setSpan(android.text.style.ForegroundColorSpan(color), start, sb.length, 0)
+                        sb.append("$label: $value\n")
+                    }
+                    dot(bar.othersColor, t("mem_others"), sz((used - vad).coerceAtLeast(0)))
+                    dot(accent, t("mem_vad"), sz(vad))
+                    dot(0x99888888.toInt(), t("mem_free"), sz(free) + " / " + sz(total))
+                    txt.text = sb.trimEnd()
+                }
+            } catch (e: Throwable) {
+                runOnUiThread { txt.text = t("mem_err") }
+            }
+        }.start()
+    }
+
+    private fun vadFolderSize(): Long {
+        var sum = 0L
+        try {
+            contentResolver.query(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Downloads.SIZE),
+                "${MediaStore.Downloads.RELATIVE_PATH} LIKE ?", arrayOf("Download/VAD%"), null
+            )?.use { c -> while (c.moveToNext()) sum += c.getLong(0) }
+        } catch (_: Throwable) {
+        }
+        try {
+            treeUri()?.let { tu ->
+                sum += treeSize(tu, DocumentsContract.getTreeDocumentId(tu), 0)
+            }
+        } catch (_: Throwable) {
+        }
+        return sum
+    }
+
+    private fun treeSize(tree: Uri, docId: String, depth: Int): Long {
+        if (depth > 8) return 0
+        var sum = 0L
+        val kids = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
+        contentResolver.query(
+            kids,
+            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE),
+            null, null, null
+        )?.use { c ->
+            while (c.moveToNext()) {
+                if (c.getString(1) == DocumentsContract.Document.MIME_TYPE_DIR) sum += treeSize(tree, c.getString(0), depth + 1)
+                else sum += c.getLong(2)
+            }
+        }
+        return sum
     }
 
     // ------------------------------------------------------ Папка загрузки

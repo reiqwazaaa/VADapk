@@ -118,6 +118,7 @@ class Reader(
     private lateinit var bManga: Button
     private lateinit var bFit: Button
     private lateinit var bSpread: Button
+    private lateinit var bMarks: Button
 
     private val saveRun = Runnable { saveProgress(if (epub != null) epubIdx else 0, curFrac) }
 
@@ -266,7 +267,8 @@ class Reader(
         bManga = button("") { toggleManga() }
         bFit = button("") { toggleFit() }
         bSpread = button("") { cycleSpread() }
-        listOf(bMinus, bPlus, bTheme, bManga, bFit, bSpread).forEach { topBar.addView(it, w()) }
+        bMarks = button("★") { showMarks() }
+        listOf(bMinus, bPlus, bTheme, bManga, bFit, bSpread, bMarks).forEach { topBar.addView(it, w()) }
         viewer.addView(topBar, FrameLayout.LayoutParams(mp, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP))
 
         // нижняя панель
@@ -790,6 +792,7 @@ class Reader(
         docBody = l.body ?: ""
         docRaw = l.raw
         kindPages = l.pages != null
+        makeCover(key, l.pages, l.epub)
         val saved = savedFor(key)
         val si = saved?.optInt("i", 0) ?: 0
         val sf = saved?.optDouble("f", 0.0)?.toFloat() ?: 0f
@@ -869,6 +872,7 @@ class Reader(
     }
 
     private fun removeRecent(key: String) {
+        try { coverFile(key).delete() } catch (_: Throwable) {}
         val old = recents()
         val out = JSONArray()
         for (k in 0 until old.length()) {
@@ -878,6 +882,61 @@ class Reader(
         prefs.edit().putString("rd_recent", out.toString()).apply()
     }
 
+    private fun coverFile(key: String): File {
+        val md = java.security.MessageDigest.getInstance("MD5").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
+        return File(File(act.filesDir, "rd_covers"), "$md.jpg")
+    }
+
+    private fun saveCover(key: String, bm: Bitmap?) {
+        if (bm == null || bm.width == 0) return
+        try {
+            val f = coverFile(key)
+            f.parentFile?.mkdirs()
+            val w = 260
+            val h = (bm.height * w / bm.width.toFloat()).toInt().coerceIn(40, 520)
+            val sc = Bitmap.createScaledBitmap(bm, w, h, true)
+            f.outputStream().use { sc.compress(Bitmap.CompressFormat.JPEG, 82, it) }
+            if (sc !== bm) sc.recycle()
+        } catch (_: Throwable) {
+        }
+    }
+
+    /** Обложка для плиток: первая страница комикса/PDF или картинка-обложка из epub. Делается один раз. */
+    private fun makeCover(key: String, p: Pages?, e: EpubBook?) {
+        if (key.isEmpty() || coverFile(key).exists()) return
+        if (p != null) {
+            exec.execute { try { if (pages === p) saveCover(key, p.bitmap(0, 260)) } catch (_: Throwable) {} }
+        } else if (e != null) {
+            loader.execute {
+                try {
+                    val names = e.zip.entries().asSequence().map { it.name }.filter { ReaderFormats.isImage(it) }.toList()
+                    val pick = names.firstOrNull { it.lowercase().contains("cover") } ?: names.firstOrNull()
+                    if (pick != null) {
+                        val bytes = e.zip.getInputStream(e.zip.getEntry(pick)).use { it.readBytes() }
+                        saveCover(key, ReaderFormats.decode(bytes, 260))
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+        }
+    }
+
+    private fun tileInfo(o: JSONObject): String = when (o.optString("k")) {
+        "p" -> f("rd_page", o.optInt("i") + 1, o.optInt("c"))
+        "e" -> f("rd_chapter", o.optInt("i") + 1, o.optInt("c"))
+        else -> (o.optDouble("f") * 100).toInt().toString() + "%"
+    }
+
+    private fun tileProgress(o: JSONObject): Float {
+        val c = o.optInt("c")
+        return when (o.optString("k")) {
+            "p" -> if (c > 0) (o.optInt("i") + 1f) / c else 0f
+            "e" -> if (c > 0) (o.optInt("i") + o.optDouble("f").toFloat()) / c else 0f
+            else -> o.optDouble("f").toFloat()
+        }.coerceIn(0f, 1f)
+    }
+
+    /** Каталог: плитки с обложкой, страницей «N / M» под ней и названием. */
     private fun refreshRecent() {
         recentBox.removeAllViews()
         val a = recents()
@@ -885,35 +944,163 @@ class Reader(
             recentBox.addView(TextView(act).apply { text = t("rd_recent_empty"); tint(this) })
             return
         }
+        val first = a.optJSONObject(0)
+        if (first != null) {
+            recentBox.addView(button(f("rd_continue", first.optString("n"))) {
+                open(listOf(Uri.parse(first.optString("u"))), first.optString("n"), first.optBoolean("t"))
+            })
+        }
         recentBox.addView(TextView(act).apply { text = t("rd_recent_hint"); textSize = 12f; alpha = 0.7f; tint(this) })
+        val dm = act.resources.displayMetrics
+        val gap = dp(8)
+        val usable = dm.widthPixels - dp(32)
+        val cols = (usable / dp(120)).coerceIn(2, 6)
+        val tileW = (usable - gap * (cols - 1)) / cols
+        val coverH = tileW * 3 / 2
+        var row: LinearLayout? = null
         for (k in 0 until a.length()) {
             val o = a.optJSONObject(k) ?: continue
+            if (k % cols == 0) {
+                row = LinearLayout(act).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply { topMargin = gap }
+                }
+                recentBox.addView(row)
+            }
             val u = o.optString("u")
             val n = o.optString("n")
             val tree = o.optBoolean("t")
-            val info = when (o.optString("k")) {
-                "p" -> f("rd_page", o.optInt("i") + 1, o.optInt("c"))
-                "e" -> f("rd_chapter", o.optInt("i") + 1, o.optInt("c"))
-                else -> (o.optDouble("f") * 100).toInt().toString() + "%"
-            }
-            val row = LinearLayout(act).apply {
+            val tile = LinearLayout(act).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(dp(10), dp(10), dp(10), dp(10))
-                setBackgroundColor(0x22888888)
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-                ).apply { topMargin = dp(6) }
                 setOnClickListener { open(listOf(Uri.parse(u)), n, tree) }
                 setOnLongClickListener {
-                    removeRecent(u)
-                    refreshRecent()
-                    toast(t("rd_removed"))
+                    android.app.AlertDialog.Builder(act)
+                        .setTitle(n)
+                        .setPositiveButton(t("rd_remove")) { _, _ ->
+                            removeRecent(u); refreshRecent(); toast(t("rd_removed"))
+                        }
+                        .setNegativeButton(t("cancel"), null)
+                        .show()
                     true
                 }
             }
-            row.addView(TextView(act).apply { text = n; setTypeface(typeface, Typeface.BOLD); tint(this) })
-            row.addView(TextView(act).apply { text = info; textSize = 12f; alpha = 0.7f; tint(this) })
-            recentBox.addView(row)
+            // обложка
+            val cover = FrameLayout(act)
+            val hue = ((n.hashCode() and 0x7fffffff) % 360).toFloat()
+            val bg = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setColor(Color.HSVToColor(floatArrayOf(hue, 0.35f, 0.85f)))
+            }
+            cover.background = bg
+            val cf = coverFile(u)
+            var bmp: Bitmap? = null
+            if (cf.exists()) bmp = try { android.graphics.BitmapFactory.decodeFile(cf.path) } catch (_: Throwable) { null }
+            if (bmp != null) {
+                cover.addView(android.widget.ImageView(act).apply {
+                    setImageBitmap(bmp)
+                    scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                    clipToOutline = true
+                    outlineProvider = object : android.view.ViewOutlineProvider() {
+                        override fun getOutline(v: View, out: android.graphics.Outline) { out.setRoundRect(0, 0, v.width, v.height, dp(10).toFloat()) }
+                    }
+                }, FrameLayout.LayoutParams(tileW, coverH))
+            } else {
+                val ext = if (tree) "DIR" else n.substringAfterLast('.', "").uppercase().take(5).ifEmpty { "DOC" }
+                cover.addView(TextView(act).apply {
+                    text = ext; setTextColor(Color.WHITE); setTypeface(typeface, Typeface.BOLD); textSize = 22f; gravity = Gravity.CENTER
+                }, FrameLayout.LayoutParams(tileW, coverH))
+            }
+            val prog = tileProgress(o)
+            cover.addView(View(act).apply { setBackgroundColor(0xFFFF5FA2.toInt()) },
+                FrameLayout.LayoutParams((tileW * prog).toInt().coerceAtLeast(if (prog > 0f) dp(3) else 0), dp(4), Gravity.BOTTOM or Gravity.START))
+            tile.addView(cover, LinearLayout.LayoutParams(tileW, coverH))
+            tile.addView(TextView(act).apply {
+                text = tileInfo(o); textSize = 12f; setTypeface(typeface, Typeface.BOLD); tint(this); setPadding(0, dp(4), 0, 0)
+            })
+            tile.addView(TextView(act).apply {
+                text = n; textSize = 11f; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END; alpha = 0.75f; tint(this)
+            })
+            row?.addView(tile, LinearLayout.LayoutParams(tileW, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                if (k % cols != 0) leftMargin = gap
+            })
+        }
+    }
+
+    // ------------------------------------------------------------------ закладки
+
+    private fun marksAll(): JSONObject = try { JSONObject(prefs.getString("rd_marks", "{}")) } catch (_: Throwable) { JSONObject() }
+
+    private fun marksFor(key: String): JSONArray = marksAll().optJSONArray(key) ?: JSONArray()
+
+    private fun putMarks(key: String, arr: JSONArray) {
+        val all = marksAll()
+        if (arr.length() == 0) all.remove(key) else all.put(key, arr)
+        prefs.edit().putString("rd_marks", all.toString()).apply()
+    }
+
+    /** Текущее место чтения: номер (страница/глава), доля прокрутки и подпись. */
+    private fun curPos(): Triple<Int, Float, String> {
+        val pg = pages
+        val e = epub
+        return when {
+            pg != null -> Triple(index, 0f, f("rd_page", index + 1, pg.count))
+            e != null -> Triple(epubIdx, curFrac, f("rd_chapter", epubIdx + 1, e.chapters.size) + " · " + (curFrac * 100).toInt() + "%")
+            else -> Triple(0, curFrac, f("rd_pos", (curFrac * 100).toInt()))
+        }
+    }
+
+    private fun showMarks() {
+        if (curUri.isEmpty()) return
+        val key = curUri
+        val marks = marksFor(key)
+        val labels = ArrayList<String>()
+        labels.add("＋ " + t("rd_mark_here"))
+        for (k in 0 until marks.length()) labels.add("★ " + marks.getJSONObject(k).optString("l"))
+        val dlg = android.app.AlertDialog.Builder(act)
+            .setTitle(t("rd_marks_title"))
+            .setItems(labels.toTypedArray()) { _, w ->
+                if (w == 0) {
+                    val (i, fr, label) = curPos()
+                    val out = JSONArray()
+                    var dup = false
+                    for (k in 0 until marks.length()) {
+                        val m = marks.getJSONObject(k)
+                        if (m.optInt("i") == i && Math.abs(m.optDouble("f") - fr) < 0.01) dup = true
+                        out.put(m)
+                    }
+                    if (dup) { toast(t("rd_mark_exists")); return@setItems }
+                    out.put(JSONObject().put("i", i).put("f", fr.toDouble()).put("l", label))
+                    putMarks(key, out)
+                    toast(t("rd_mark_added"))
+                } else {
+                    val m = marks.getJSONObject(w - 1)
+                    jumpTo(m.optInt("i"), m.optDouble("f").toFloat())
+                }
+            }
+            .setNegativeButton(t("cancel"), null)
+            .create()
+        dlg.setOnShowListener {
+            dlg.listView.setOnItemLongClickListener { _, _, pos, _ ->
+                if (pos > 0) {
+                    val out = JSONArray()
+                    for (k in 0 until marks.length()) if (k != pos - 1) out.put(marks.getJSONObject(k))
+                    putMarks(key, out)
+                    toast(t("rd_mark_deleted"))
+                    dlg.dismiss()
+                }
+                true
+            }
+        }
+        dlg.show()
+    }
+
+    private fun jumpTo(i: Int, fr: Float) {
+        when {
+            pages != null -> showPage(i, false)
+            epub != null -> if (i == epubIdx) scrollToFrac(fr) else loadChapter(i, fr)
+            else -> scrollToFrac(fr)
         }
     }
 }
