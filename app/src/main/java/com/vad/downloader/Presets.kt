@@ -27,6 +27,7 @@ object DlPresets {
 /** Подбирает понятную подсказку по тексту ошибки yt-dlp. Возвращает ключ строки или null. */
 object ErrorHints {
     private val rules: List<Pair<Regex, String>> = listOf(
+        Regex("extractor error has occurred|KeyError|Twitter Space not found", RegexOption.IGNORE_CASE) to "err_extractor",
         Regex("members-only|members only|channel's members|Join this channel", RegexOption.IGNORE_CASE) to "err_members",
         Regex("private video|confirm your age|age-restricted|age restricted", RegexOption.IGNORE_CASE) to "err_private",
         Regex("not a bot", RegexOption.IGNORE_CASE) to "err_bot",
