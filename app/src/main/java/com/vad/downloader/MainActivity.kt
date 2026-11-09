@@ -459,6 +459,7 @@ class MainActivity : Activity() {
         val next = open[(open.indexOf(outfit()) + 1) % open.size]
         prefs.edit().putInt("outfit_cur", next).apply()
         setMood("normal")
+        widgetMood("normal")
         toast(t(when (next) { 1 -> "outfit_on"; 2 -> "outfit_pj"; 3 -> "outfit_queen"; else -> "outfit_off" }))
     }
 
@@ -1070,6 +1071,13 @@ class MainActivity : Activity() {
             handleViewIntent(i)
             return
         }
+        if (i?.action == VadWidget.ACTION_PASTE) {
+            i.action = Intent.ACTION_MAIN
+            tab = 0
+            applyTabFn?.invoke()
+            pasteAndDownload(5)
+            return
+        }
         if (i?.action == Intent.ACTION_SEND && i.type == "text/plain") {
             val text = i.getStringExtra(Intent.EXTRA_TEXT) ?: return
             val link = Regex("https?://\\S+").find(text)?.value ?: text
@@ -1176,6 +1184,24 @@ class MainActivity : Activity() {
         if (!b) progressBar.progress = 0
     }
 
+    @Volatile private var pendingPasteDl = false
+
+    /** Из виджета: берём ссылку из буфера (читается, когда окно в фокусе — поэтому с повторами) и качаем. */
+    private fun pasteAndDownload(tries: Int) {
+        val link = Regex("https?://\\S+").find(readClip().first)?.value
+        if (link == null) {
+            if (tries > 0) Handler(Looper.getMainLooper()).postDelayed({ pasteAndDownload(tries - 1) }, 250)
+            else toast(t("clip_empty"))
+            return
+        }
+        urlInput.setText(link)
+        if (engineReady) startAuto() else pendingPasteDl = true
+    }
+
+    private fun widgetMood(m: String) {
+        try { VadWidget.setMood(this, m) } catch (_: Throwable) {}
+    }
+
     private fun setStatus(s: String) = runOnUiThread { statusText.text = s }
 
     // -------------------------------------------------------------- Движок
@@ -1200,7 +1226,10 @@ class MainActivity : Activity() {
                 }
                 setStatus(t("st_ready"))
                 setBusy(false)
-                runOnUiThread { offerResume(); autoCheckSubs() }
+                runOnUiThread {
+                    offerResume(); autoCheckSubs()
+                    if (pendingPasteDl) { pendingPasteDl = false; startAuto() }
+                }
             } catch (e: Throwable) {
                 setStatus(t("st_init_fail"))
                 log(f("log_init_fail", e.message))
@@ -2216,6 +2245,7 @@ class MainActivity : Activity() {
         refreshQueue()
         setBusy(true)
         setStatus(t("st_downloading"))
+        widgetMood("wink")
         savePending(urls, playlist, spec)
         DownloadService.start(this)
         Thread {
@@ -2348,6 +2378,7 @@ class MainActivity : Activity() {
             DownloadService.stop(this)
             DownloadService.finish(this, doneTitle, doneText)
             setBusy(false)
+            widgetMood(if (stopped) "normal" else mood)
             runOnUiThread {
                 setMood(mood, 5000)
                 if (stopped && queue.any { it.state == 0 }) queuePaused = true

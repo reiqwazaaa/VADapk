@@ -121,5 +121,17 @@
             android:name=".DownloadService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <receiver
+            android:name=".VadWidget"
+            android:exported="true"
+            android:label="VAD: вставить и скачать">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/vad_widget_info" />
+        </receiver>
+
     </application>
 </manifest>
