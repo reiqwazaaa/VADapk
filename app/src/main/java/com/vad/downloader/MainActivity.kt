@@ -768,20 +768,34 @@ class MainActivity : Activity() {
                 override fun onNothingSelected(p: AdapterView<*>?) {}
             }
         }
+        // Качество, формат звука, субтитры и обрезка спрятаны в раскрывающийся блок «Параметры загрузки»
+        val params = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val paramsOpen = prefs.getBoolean("dl_params_open", false)
+        params.visibility = if (paramsOpen) View.VISIBLE else View.GONE
+        lateinit var paramsHdr: Button
+        fun paramsLabel(open: Boolean) = t("dl_params") + if (open) "  \u25B4" else "  \u25BE"
+        paramsHdr = button(paramsLabel(paramsOpen)) {
+            val open = params.visibility != View.VISIBLE
+            params.visibility = if (open) View.VISIBLE else View.GONE
+            paramsHdr.text = paramsLabel(open)
+            prefs.edit().putBoolean("dl_params_open", open).apply()
+        }
+        main.addView(paramsHdr)
+        main.addView(params)
         if (classicUi) {
-            main.addView(gifBox)
-            main.addView(TextView(this).apply { text = t("quality_label"); tintText(this) })
-            main.addView(qualitySpinner)
-            main.addView(TextView(this).apply { text = t("audio_fmt_label"); tintText(this) })
-            main.addView(audioSpinner)
-            main.addView(TextView(this).apply { text = t("sub_label"); tintText(this) })
-            main.addView(subsSpinner)
+            params.addView(gifBox)
+            params.addView(TextView(this).apply { text = t("quality_label"); tintText(this) })
+            params.addView(qualitySpinner)
+            params.addView(TextView(this).apply { text = t("audio_fmt_label"); tintText(this) })
+            params.addView(audioSpinner)
+            params.addView(TextView(this).apply { text = t("sub_label"); tintText(this) })
+            params.addView(subsSpinner)
         } else {
-            main.addView(TextView(this).apply { text = t("pr_label"); tintText(this) })
-            main.addView(presetSpinner)
+            params.addView(TextView(this).apply { text = t("pr_label"); tintText(this) })
+            params.addView(presetSpinner)
         }
         // обрезка: по желанию, для видео и звука
-        main.addView(TextView(this).apply { text = t("trim_label"); tintText(this) })
+        params.addView(TextView(this).apply { text = t("trim_label"); tintText(this) })
         trimFromEt = EditText(this).apply {
             hint = t("trim_from"); setText(oldTrimA); setSingleLine(); inputType = android.text.InputType.TYPE_CLASS_TEXT
             if (kawaii) { setTextColor(kawaiiText); setHintTextColor(kawaiiText and 0x00FFFFFF or 0x88000000.toInt()) }
@@ -793,7 +807,7 @@ class MainActivity : Activity() {
         val trimRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         trimRow.addView(trimFromEt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         trimRow.addView(trimToEt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        main.addView(trimRow)
+        params.addView(trimRow)
 
         // --- кнопки действий ---
         val bAuto = button(if (classicUi) t("dl_auto") else t("dl_go")) { startAuto() }

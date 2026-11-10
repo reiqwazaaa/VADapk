@@ -17,7 +17,7 @@ import java.net.URL
  */
 object Transcriber {
     class Seg(val t0: Long, val t1: Long, val text: String, var tr: String = "")
-    class Opts(val uri: Uri, val modelFile: String, val src: String, val dst: String, val baseName: String)
+    class Opts(val uri: Uri, val modelFile: String, val src: String, val dst: String, val baseName: String, val engine: Int = 0, val deeplKey: String = "")
 
     interface Listener {
         fun onState()
@@ -130,31 +130,18 @@ object Transcriber {
             if (stopped) return finish(ctx, t("tr_stopped"))
             if (synchronized(segs) { segs.isEmpty() }) return finish(ctx, if (detected.isEmpty()) t("tr_err_run") else t("tr_empty"))
 
-            // 4. перевод
+            // 4. перевод (0 — на телефоне, 1 — Google онлайн, 2 — DeepL)
             var trNote = ""
             if (o.dst.isNotEmpty()) {
                 val from = if (o.src == "auto") detected else o.src
-                val fromTag = TranslateLanguage.fromLanguageTag(from)
-                val toTag = TranslateLanguage.fromLanguageTag(o.dst)
-                if (fromTag == null || toTag == null) {
-                    trNote = f("tr_tr_unsupported", from)
-                } else if (fromTag != toTag) {
-                    var translator: com.google.mlkit.nl.translate.Translator? = null
-                    try {
-                        translator = Translation.getClient(TranslatorOptions.Builder().setSourceLanguage(fromTag).setTargetLanguage(toTag).build())
-                        setStatus(ctx, t("tr_trdl"))
-                        Tasks.await(translator.downloadModelIfNeeded(DownloadConditions.Builder().build()))
-                        val all = snapshot()
-                        for ((i, s) in all.withIndex()) {
-                            if (stopped) break
-                            s.tr = try { Tasks.await(translator.translate(s.text)) } catch (_: Throwable) { "" }
-                            if (i % 5 == 0) setStatus(ctx, f("tr_trans", i + 1, all.size), (i + 1) * 100 / all.size)
-                        }
-                    } catch (e: Throwable) {
-                        trNote = f("tr_tr_fail", e.message ?: e.javaClass.simpleName)
-                    } finally {
-                        try { translator?.close() } catch (_: Throwable) {}
+                try {
+                    trNote = when (o.engine) {
+                        1 -> translateOnline(ctx, from, o.dst, null)
+                        2 -> translateOnline(ctx, from, o.dst, o.deeplKey)
+                        else -> translateLocal(ctx, from, o.dst)
                     }
+                } catch (e: Throwable) {
+                    trNote = f("tr_tr_fail", e.message ?: e.javaClass.simpleName)
                 }
             }
             finish(ctx, if (stopped) t("tr_stopped") else f("tr_done", snapshot().size) + (if (trNote.isNotEmpty()) "\n$trNote" else ""))
@@ -165,6 +152,105 @@ object Transcriber {
             tmpIn.delete()
             raw.delete()
         }
+    }
+
+    // ------------------------------------------------------------ перевод
+
+    private fun translateLocal(ctx: Context, from: String, dst: String): String {
+        val fromTag = TranslateLanguage.fromLanguageTag(from)
+        val toTag = TranslateLanguage.fromLanguageTag(dst)
+        if (fromTag == null || toTag == null) return f("tr_tr_unsupported", from)
+        if (fromTag == toTag) return ""
+        var translator: com.google.mlkit.nl.translate.Translator? = null
+        try {
+            translator = Translation.getClient(TranslatorOptions.Builder().setSourceLanguage(fromTag).setTargetLanguage(toTag).build())
+            setStatus(ctx, t("tr_trdl"))
+            Tasks.await(translator.downloadModelIfNeeded(DownloadConditions.Builder().build()))
+            val all = snapshot()
+            for ((i, s) in all.withIndex()) {
+                if (stopped) break
+                s.tr = try { Tasks.await(translator.translate(s.text)) } catch (_: Throwable) { "" }
+                if (i % 5 == 0) setStatus(ctx, f("tr_trans", i + 1, all.size), (i + 1) * 100 / all.size)
+            }
+        } finally {
+            try { translator?.close() } catch (_: Throwable) {}
+        }
+        return ""
+    }
+
+    /** Онлайн-перевод пачками: key == null — Google (без ключа), иначе DeepL с этим ключом. */
+    private fun translateOnline(ctx: Context, from: String, dst: String, key: String?): String {
+        val all = snapshot()
+        var i = 0
+        while (i < all.size && !stopped) {
+            val batch = ArrayList<Transcriber.Seg>()
+            var chars = 0
+            val maxN = if (key == null) 8 else 40
+            while (i < all.size && batch.size < maxN && chars + all[i].text.length < 1500) {
+                batch.add(all[i]); chars += all[i].text.length; i++
+            }
+            if (batch.isEmpty()) { batch.add(all[i]); i++ }
+            val texts = batch.map { it.text }
+            val out = if (key == null) googleBatch(from, dst, texts) else deeplBatch(key, from, dst, texts)
+            for ((k, seg) in batch.withIndex()) seg.tr = out.getOrNull(k) ?: ""
+            setStatus(ctx, f("tr_trans", i, all.size), i * 100 / all.size)
+        }
+        return ""
+    }
+
+    private fun http(url: String, method: String, headers: Map<String, String>, body: String?): String {
+        val c = URL(url).openConnection() as HttpURLConnection
+        try {
+            c.requestMethod = method
+            c.connectTimeout = 20000
+            c.readTimeout = 30000
+            for ((k, v) in headers) c.setRequestProperty(k, v)
+            if (body != null) {
+                c.doOutput = true
+                c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            }
+            val code = c.responseCode
+            val txt = (if (code in 200..299) c.inputStream else c.errorStream)?.bufferedReader()?.readText().orEmpty()
+            if (code !in 200..299) throw RuntimeException("HTTP $code" + (if (code == 429) " (too many requests)" else if (code == 403 || code == 401) " (key/access)" else ""))
+            return txt
+        } finally {
+            c.disconnect()
+        }
+    }
+
+    private fun gcode(c: String) = if (c == "zh") "zh-CN" else c
+
+    private fun googleOne(from: String, to: String, text: String): String {
+        val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=" + gcode(from) + "&tl=" + gcode(to) +
+            "&dt=t&q=" + java.net.URLEncoder.encode(text, "UTF-8")
+        val arr = org.json.JSONArray(http(url, "GET", mapOf("User-Agent" to "Mozilla/5.0"), null)).getJSONArray(0)
+        val sb = StringBuilder()
+        for (k in 0 until arr.length()) sb.append(arr.getJSONArray(k).optString(0, ""))
+        return sb.toString()
+    }
+
+    private fun googleBatch(from: String, to: String, texts: List<String>): List<String> {
+        if (texts.size == 1) return listOf(googleOne(from, to, texts[0]))
+        val joined = googleOne(from, to, texts.joinToString("\n"))
+        val parts = joined.split("\n")
+        if (parts.size == texts.size) return parts.map { it.trim() }
+        // строки слиплись или разъехались — переводим по одной
+        return texts.map { googleOne(from, to, it) }
+    }
+
+    private fun deeplTarget(c: String) = when (c) { "en" -> "EN-US"; "pt" -> "PT-BR"; else -> c.uppercase() }
+
+    private fun deeplBatch(key: String, from: String, to: String, texts: List<String>): List<String> {
+        val host = if (key.endsWith(":fx")) "api-free.deepl.com" else "api.deepl.com"
+        val body = org.json.JSONObject().apply {
+            put("text", org.json.JSONArray(texts))
+            put("target_lang", deeplTarget(to))
+            if (from != "auto" && from.isNotEmpty()) put("source_lang", from.uppercase())
+        }.toString()
+        val resp = http("https://$host/v2/translate", "POST",
+            mapOf("Authorization" to "DeepL-Auth-Key $key", "Content-Type" to "application/json"), body)
+        val arr = org.json.JSONObject(resp).getJSONArray("translations")
+        return (0 until arr.length()).map { arr.getJSONObject(it).optString("text", "") }
     }
 
     // ------------------------------------------------------------ модель

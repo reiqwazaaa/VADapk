@@ -50,6 +50,8 @@ class TranscribeActivity : Activity() {
     private lateinit var modelSp: Spinner
     private lateinit var srcSp: Spinner
     private lateinit var dstSp: Spinner
+    private lateinit var engineSp: Spinner
+    private lateinit var deeplKey: android.widget.EditText
     private lateinit var startBtn: Button
     private lateinit var stopBtn: Button
     private lateinit var status: TextView
@@ -61,13 +63,16 @@ class TranscribeActivity : Activity() {
     private val running get() = Transcriber.running
 
     private val models = listOf(
-        Triple("ggml-base-q5_1.bin", "tr_model_fast", 57L),
-        Triple("ggml-small-q5_1.bin", "tr_model_good", 181L)
+        Triple("ggml-base-q5_1.bin", "tr_model_fast", 60L),
+        Triple("ggml-small-q5_1.bin", "tr_model_mid", 190L),
+        Triple("ggml-large-v3-turbo-q5_0.bin", "tr_model_best", 574L)
     )
-    private val srcCodes = listOf("ja", "auto", "en", "ru", "zh", "ko")
-    private val srcNames = listOf("日本語", "", "English", "Русский", "中文", "한국어")
-    private val dstCodes = listOf("", "ru", "en", "uk", "es", "de", "fr", "zh", "ko", "pt")
-    private val dstNames = listOf("", "Русский", "English", "Українська", "Español", "Deutsch", "Français", "中文", "한국어", "Português")
+    // английский — первым (язык записи по умолчанию)
+    private val srcCodes = listOf("en", "ja", "auto", "ru", "zh", "ko", "es", "de", "fr", "it", "pt", "tr", "pl", "uk")
+    private val srcNames = listOf("English", "日本語", "", "Русский", "中文", "한국어", "Español", "Deutsch", "Français", "Italiano", "Português", "Türkçe", "Polski", "Українська")
+    private val dstCodes = listOf("", "ru", "en", "uk", "ja", "es", "de", "fr", "it", "zh", "ko", "pt", "tr", "pl")
+    private val dstNames = listOf("", "Русский", "English", "Українська", "日本語", "Español", "Deutsch", "Français", "Italiano", "中文", "한국어", "Português", "Türkçe", "Polski")
+    private val prefs by lazy { getSharedPreferences("vad", Context.MODE_PRIVATE) }
 
     private fun t(k: String) = Strings.t(k)
     private fun f(k: String, vararg a: Any?) = Strings.f(k, *a)
@@ -85,6 +90,13 @@ class TranscribeActivity : Activity() {
         setPadding(dp(14), dp(10), dp(14), dp(10))
         setOnClickListener { click() }
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
+    }
+
+    private fun remember(sp: Spinner, key: String) {
+        sp.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) { prefs.edit().putInt(key, pos).apply() }
+            override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+        }
     }
 
     private fun label(text: String) = TextView(this).apply {
@@ -122,28 +134,52 @@ class TranscribeActivity : Activity() {
             textSize = 20f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         })
-        col.addView(TextView(this).apply {
-            text = t("tr_keep")
-            setTextColor(ink)
-            textSize = 12f
-            alpha = 0.7f
-            setPadding(0, dp(4), 0, dp(8))
-        })
-
         fileLabel = TextView(this).apply { text = t("tr_nofile"); setTextColor(ink); textSize = 13f }
         col.addView(btn(t("tr_pick")) { pick() })
         col.addView(fileLabel)
 
         col.addView(label(t("tr_model")))
         modelSp = spinner(models.map { (_, k, mb) -> t(k) + " ~" + mb + " MB" })
+        modelSp.setSelection(prefs.getInt("tr_model", 1).coerceIn(0, models.size - 1))
+        remember(modelSp, "tr_model")
         col.addView(modelSp)
         col.addView(label(t("tr_src")))
         srcSp = spinner(srcNames.mapIndexed { i, n -> if (srcCodes[i] == "auto") t("tr_auto") else n })
+        srcSp.setSelection(prefs.getInt("tr_src", 0).coerceIn(0, srcCodes.size - 1))
+        remember(srcSp, "tr_src")
         col.addView(srcSp)
         col.addView(label(t("tr_dst")))
         dstSp = spinner(dstNames.mapIndexed { i, n -> if (dstCodes[i].isEmpty()) t("tr_none") else n })
-        dstSp.setSelection(if (java.util.Locale.getDefault().language == "ru" || Strings.code == "ru" || Strings.code == "rk") 1 else 2)
+        dstSp.setSelection(prefs.getInt("tr_dst", 0).coerceIn(0, dstCodes.size - 1))
+        remember(dstSp, "tr_dst")
         col.addView(dstSp)
+
+        col.addView(label(t("tr_engine")))
+        engineSp = spinner(listOf(t("tr_eng_local"), t("tr_eng_google"), t("tr_eng_deepl")))
+        engineSp.setSelection(prefs.getInt("tr_eng", 0).coerceIn(0, 2))
+        col.addView(engineSp)
+        deeplKey = android.widget.EditText(this).apply {
+            hint = t("tr_deepl_key")
+            setSingleLine()
+            setTextColor(ink)
+            setHintTextColor((ink and 0x00FFFFFF) or 0x88000000.toInt())
+            setText(prefs.getString("deepl_key", "") ?: "")
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            visibility = if (engineSp.selectedItemPosition == 2) View.VISIBLE else View.GONE
+            addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(e: android.text.Editable?) { prefs.edit().putString("deepl_key", e?.toString()?.trim() ?: "").apply() }
+                override fun beforeTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+                override fun onTextChanged(a: CharSequence?, b: Int, c: Int, d: Int) {}
+            })
+        }
+        engineSp.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) {
+                prefs.edit().putInt("tr_eng", pos).apply()
+                deeplKey.visibility = if (pos == 2) View.VISIBLE else View.GONE
+            }
+            override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+        }
+        col.addView(deeplKey)
 
         startBtn = btn(t("tr_start")) { start() }
         stopBtn = btn(t("tr_stop")) { stop() }.apply { visibility = View.GONE }
@@ -282,8 +318,14 @@ class TranscribeActivity : Activity() {
         val model = models[modelSp.selectedItemPosition]
         val src = srcCodes[srcSp.selectedItemPosition]
         val dst = dstCodes[dstSp.selectedItemPosition]
+        val eng = engineSp.selectedItemPosition
+        val key = deeplKey.text.toString().trim()
+        if (dst.isNotEmpty() && eng == 2 && key.isEmpty()) {
+            Toast.makeText(this, t("tr_deepl_nokey"), Toast.LENGTH_LONG).show()
+            return
+        }
         result.text = ""
-        Transcriber.start(this, Transcriber.Opts(u, model.first, src, dst, baseName))
+        Transcriber.start(this, Transcriber.Opts(u, model.first, src, dst, baseName, eng, key))
         showState()
     }
 

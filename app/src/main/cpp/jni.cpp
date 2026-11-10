@@ -100,6 +100,7 @@ Java_com_vad_downloader_WhisperLib_nRun(JNIEnv *env, jclass, jlong h, jstring ra
     wp.print_timestamps = false;
     wp.print_special = false;
     wp.greedy.best_of = 1;
+    wp.no_context = true;          // без подсказки из прошлого текста: меньше зацикливаний и «галлюцинаций» на длинных записях
     wp.new_segment_callback = on_new_segment;
     wp.new_segment_callback_user_data = &cc;
     wp.progress_callback = on_progress;
