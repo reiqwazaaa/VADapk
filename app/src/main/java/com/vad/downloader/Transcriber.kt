@@ -35,6 +35,9 @@ object Transcriber {
     @Volatile private var pending: Opts? = null
     @Volatile private var ffProc: Process? = null
     private var lastNotify = 0L
+    private var origSaved = false
+    private var trSaved = false
+    private val savedNames = ArrayList<String>()
 
     private fun t(k: String) = Strings.t(k)
     private fun f(k: String, vararg a: Any?) = Strings.f(k, *a)
@@ -44,6 +47,9 @@ object Transcriber {
         if (running) return
         running = true
         stopped = false
+        origSaved = false
+        trSaved = false
+        savedNames.clear()
         synchronized(segs) { segs.clear() }
         opts = o
         pending = o
@@ -74,7 +80,17 @@ object Transcriber {
         }
     }
 
-    private fun finish(ctx: Context, msg: String) {
+    private fun finish(ctx: Context, msg0: String) {
+        // Что бы ни случилось (остановка, ошибка) — сохраняем всё, что успели сделать
+        try {
+            val o = opts
+            if (o != null) {
+                if (!origSaved && segs.isNotEmpty()) saveSet(ctx, o, 0)
+                if (!trSaved && o.dst.isNotEmpty() && snapshot().any { it.tr.isNotEmpty() }) { saveSet(ctx, o, 1); saveSet(ctx, o, 2) }
+            }
+        } catch (_: Throwable) {
+        }
+        val msg = if (savedNames.isNotEmpty()) msg0 + "\n" + f("tr_autosaved", savedNames.joinToString(", ")) else msg0
         running = false
         status = msg
         progress = -1
@@ -130,6 +146,8 @@ object Transcriber {
             if (stopped) return finish(ctx, t("tr_stopped"))
             if (synchronized(segs) { segs.isEmpty() }) return finish(ctx, if (detected.isEmpty()) t("tr_err_run") else t("tr_empty"))
 
+            saveSet(ctx, o, 0)   // расшифровка готова — сразу в файлы, не дожидаясь перевода
+
             // 4. перевод (0 — на телефоне, 1 — Google онлайн, 2 — DeepL)
             var trNote = ""
             if (o.dst.isNotEmpty()) {
@@ -144,6 +162,10 @@ object Transcriber {
                     trNote = f("tr_tr_fail", e.message ?: e.javaClass.simpleName)
                 }
             }
+            if (o.dst.isNotEmpty() && snapshot().any { it.tr.isNotEmpty() }) {
+                saveSet(ctx, o, 1)   // только перевод
+                saveSet(ctx, o, 2)   // расшифровка и перевод через строку
+            }
             finish(ctx, if (stopped) t("tr_stopped") else f("tr_done", snapshot().size) + (if (trNote.isNotEmpty()) "\n$trNote" else ""))
         } catch (e: Throwable) {
             if (handle != 0L) try { WhisperLib.free(handle) } catch (_: Throwable) {}
@@ -152,6 +174,70 @@ object Transcriber {
             tmpIn.delete()
             raw.delete()
         }
+    }
+
+    // ------------------------------------------------------------ автосохранение
+
+    private fun stamp(cs: Long): String {
+        val s = cs / 100
+        val h = s / 3600
+        val m = (s % 3600) / 60
+        val sec = s % 60
+        return if (h > 0) String.format("[%d:%02d:%02d]", h, m, sec) else String.format("[%02d:%02d]", m, sec)
+    }
+
+    private fun srtTime(cs: Long): String {
+        val ms = cs * 10
+        return String.format("%02d:%02d:%02d,%03d", ms / 3600000, (ms / 60000) % 60, (ms / 1000) % 60, ms % 1000)
+    }
+
+    /** kind: 0 — только расшифровка, 1 — только перевод, 2 — расшифровка и под ней перевод. */
+    private fun body(kind: Int, srt: Boolean): String {
+        val sb = StringBuilder()
+        for ((i, s) in snapshot().withIndex()) {
+            val tr = s.tr.ifEmpty { s.text }
+            val lines = when (kind) {
+                0 -> listOf(s.text)
+                1 -> listOf(tr)
+                else -> if (s.tr.isEmpty()) listOf(s.text) else listOf(s.text, s.tr)
+            }
+            if (srt) {
+                sb.append(i + 1).append('\n')
+                sb.append(srtTime(s.t0)).append(" --> ").append(srtTime(maxOf(s.t1, s.t0 + 50))).append('\n')
+                for (l in lines) sb.append(l).append('\n')
+                sb.append('\n')
+            } else {
+                sb.append(stamp(s.t0)).append(' ').append(lines[0]).append('\n')
+                if (lines.size > 1) sb.append("    ").append(lines[1]).append('\n')
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun saveFile(ctx: Context, name: String, text: String): Boolean = try {
+        val cv = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, if (name.endsWith(".srt")) "application/x-subrip" else "text/plain")
+            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, "Download/VAD")
+        }
+        val out = ctx.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, cv)
+        if (out == null) false else {
+            ctx.contentResolver.openOutputStream(out)!!.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+            true
+        }
+    } catch (_: Throwable) {
+        false
+    }
+
+    /** Сохраняет .txt и .srt в Download/VAD: 0 — оригинал, 1 — перевод, 2 — оригинал + перевод. */
+    private fun saveSet(ctx: Context, o: Opts, kind: Int) {
+        if (snapshot().isEmpty()) return
+        val suffix = when (kind) { 0 -> ""; 1 -> "." + o.dst; else -> ".bilingual" }
+        for (ext in listOf("txt", "srt")) {
+            val name = o.baseName + suffix + "." + ext
+            if (saveFile(ctx, name, body(kind, ext == "srt"))) savedNames.add(name)
+        }
+        if (kind == 0) origSaved = true else trSaved = true
     }
 
     // ------------------------------------------------------------ перевод
