@@ -94,6 +94,10 @@ class MainActivity : Activity() {
     private var theme = 0
     private val kawaii: Boolean get() = theme > 0
     private val night: Boolean get() = theme == 2
+    companion object {
+        @Volatile private var inst: MainActivity? = null
+        val instance: MainActivity? get() = inst
+    }
     private var catTaps = 0
     // 0 - главная, 1 - лог, 2 - настройки
     private var tab = 0
@@ -208,6 +212,7 @@ class MainActivity : Activity() {
     // ------------------------------------------------------------------ UI
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        inst = this
         super.onCreate(savedInstanceState)
         Strings.init(this)
         try {
@@ -1076,7 +1081,8 @@ class MainActivity : Activity() {
             i.action = Intent.ACTION_MAIN
             tab = 0
             applyTabFn?.invoke()
-            pasteAndDownload(5)
+            val u = i.getStringExtra("url")
+            if (u != null) pasteUrl(u, i.getBooleanExtra("bg", false)) else pasteAndDownload(5)
             return
         }
         if (i?.action == Intent.ACTION_SEND && i.type == "text/plain") {
@@ -1199,6 +1205,19 @@ class MainActivity : Activity() {
         if (engineReady) startAuto() else pendingPasteDl = true
     }
 
+    /** Ссылка из виджета: подставить и скачать. bg — после старта убрать приложение обратно на задний план. */
+    fun pasteUrl(link: String, bg: Boolean) {
+        urlInput.setText(link)
+        if (engineReady) {
+            startAuto()
+            if (bg) Handler(Looper.getMainLooper()).postDelayed({ moveTaskToBack(true) }, 600)
+        } else {
+            pendingPasteDl = true
+            pendingPasteBg = bg
+        }
+    }
+    @Volatile private var pendingPasteBg = false
+
     private fun widgetMood(m: String) {
         try { VadWidget.setMood(this, m) } catch (_: Throwable) {}
     }
@@ -1229,7 +1248,10 @@ class MainActivity : Activity() {
                 setBusy(false)
                 runOnUiThread {
                     offerResume(); autoCheckSubs()
-                    if (pendingPasteDl) { pendingPasteDl = false; startAuto() }
+                    if (pendingPasteDl) {
+                        pendingPasteDl = false; startAuto()
+                        if (pendingPasteBg) { pendingPasteBg = false; Handler(Looper.getMainLooper()).postDelayed({ moveTaskToBack(true) }, 600) }
+                    }
                 }
             } catch (e: Throwable) {
                 setStatus(t("st_init_fail"))
@@ -1764,6 +1786,16 @@ class MainActivity : Activity() {
         if (hasFocus && ::urlInput.isInitialized) urlInput.postDelayed({ checkClip() }, 250)
     }
 
+    override fun onPause() {
+        super.onPause()
+        try { VadWidget.refresh(this) } catch (_: Throwable) {}
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (inst === this) inst = null
+    }
+
     override fun onResume() {
         super.onResume()
         if (::urlInput.isInitialized) urlInput.postDelayed({ checkClip() }, 400)
@@ -2246,7 +2278,7 @@ class MainActivity : Activity() {
         refreshQueue()
         setBusy(true)
         setStatus(t("st_downloading"))
-        widgetMood("wink")
+        try { VadWidget.downloadStart(this, queue.count { it.state == 0 }) } catch (_: Throwable) {}
         savePending(urls, playlist, spec)
         DownloadService.start(this)
         Thread {
@@ -2292,6 +2324,7 @@ class MainActivity : Activity() {
                                 statusText.text = info ?: (prefix + t("st_downloading") + " ${progress.toInt()}%")
                             }
                             if (info != null) {
+                                try { VadWidget.downloadProgress(this, qi.title, smoothPercent, info, queue.count { it.state == 0 }) } catch (_: Throwable) {}
                                 val now = System.currentTimeMillis()
                                 if (now - lastNotifyAt > 700) {
                                     lastNotifyAt = now
@@ -2379,7 +2412,7 @@ class MainActivity : Activity() {
             DownloadService.stop(this)
             DownloadService.finish(this, doneTitle, doneText)
             setBusy(false)
-            widgetMood(if (stopped) "normal" else mood)
+            try { VadWidget.downloadEnd(this, if (stopped) "normal" else mood) } catch (_: Throwable) {}
             runOnUiThread {
                 setMood(mood, 5000)
                 if (stopped && queue.any { it.state == 0 }) queuePaused = true
