@@ -83,7 +83,7 @@ class MainActivity : Activity() {
     private lateinit var gifBox: Switch
     private lateinit var qualitySpinner: Spinner
     private lateinit var pathText: TextView
-    private lateinit var progressBar: ProgressBar
+    private lateinit var progressBar: SmoothBar
     private lateinit var statusText: TextView
     private lateinit var logText: TextView
     private lateinit var logScroll: ScrollView
@@ -806,10 +806,11 @@ class MainActivity : Activity() {
         cancelButton = button(t("cancel")) { cancelDownload() }
         main.addView(cancelButton)
 
-        progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progress = oldProgress
-            if (kawaii) progressTintList = ColorStateList.valueOf(accent)
+        progressBar = SmoothBar(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(10)).apply { topMargin = dp(10); bottomMargin = dp(4) }
+            if (kawaii) setColors(if (night) 0x33FFFFFF else 0x55FFFFFF, btnColors[0], accent)
+            else setColors(0x33FFFFFF, 0xFF6FB1F2.toInt(), 0xFF4A90D9.toInt())
+            setProgress(oldProgress, false)
         }
         main.addView(progressBar)
 
@@ -1188,7 +1189,7 @@ class MainActivity : Activity() {
         actionButtons.forEach { it.isEnabled = engineReady }
         lockedButtons.forEach { it.isEnabled = engineReady && !b }
         cancelButton.isEnabled = b
-        if (!b) progressBar.progress = 0
+        if (!b) progressBar.setProgress(0, false)
     }
 
     @Volatile private var pendingPasteDl = false
@@ -2195,10 +2196,11 @@ class MainActivity : Activity() {
                     alpha = 0.85f
                 })
                 if (item.state == 1) {
-                    card.addView(ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-                        max = 100
-                        progress = item.progress
-                        if (kawaii) progressTintList = ColorStateList.valueOf(accent)
+                    card.addView(SmoothBar(this).apply {
+                        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(8)).apply { topMargin = dp(6); bottomMargin = dp(4) }
+                        if (kawaii) setColors(if (night) 0x33FFFFFF else 0x55FFFFFF, btnColors[0], accent)
+                        else setColors(0x33FFFFFF, 0xFF6FB1F2.toInt(), 0xFF4A90D9.toInt())
+                        setProgress(item.progress, false)
                     })
                     if (item.info.isNotEmpty()) card.addView(TextView(this).apply { text = item.info; textSize = 12f; tintText(this); textDirection = View.TEXT_DIRECTION_LTR })
                 }

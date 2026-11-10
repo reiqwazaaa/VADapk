@@ -12,7 +12,6 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
-import android.graphics.drawable.GradientDrawable
 import android.view.View
 import android.widget.RemoteViews
 
@@ -29,8 +28,6 @@ class VadWidget : AppWidgetProvider() {
     override fun onAppWidgetOptionsChanged(ctx: Context, mgr: AppWidgetManager, id: Int, newOptions: android.os.Bundle?) {
         refresh(ctx)
     }
-
-    private class Th(val bg: IntArray, val btn: IntArray, val text: Int, val btnText: Int, val accent: Int, val track: Int)
 
     companion object {
         const val ACTION_PASTE = "com.vad.downloader.PASTE_DL"
@@ -85,33 +82,9 @@ class VadWidget : AppWidgetProvider() {
             else -> when (m) { "happy" -> R.drawable.kawaii_girl_happy; "sad" -> R.drawable.kawaii_girl_sad; "wink" -> R.drawable.kawaii_girl_wink; else -> R.drawable.kawaii_girl }
         }
 
-        // Палитры — копия из MainActivity: (нужно побед, фон, кнопка, акцент, флаг награды)
-        private class Pal(val need: Int, val bg: IntArray, val btn: IntArray, val accent: Int, val flag: String = "")
-        private val pals = listOf(
-            Pal(0, intArrayOf(0xFFFFC1E3.toInt(), 0xFFE0C3FF.toInt(), 0xFFBDE7FF.toInt()), intArrayOf(0xFFFF9ACB.toInt(), 0xFFFFC2E5.toInt()), 0xFFFF5FA2.toInt()),
-            Pal(1, intArrayOf(0xFFC9FFE5.toInt(), 0xFFBDEBFF.toInt(), 0xFFE8FFD0.toInt()), intArrayOf(0xFF5EDDB0.toInt(), 0xFFA8F5D6.toInt()), 0xFF22B58A.toInt()),
-            Pal(3, intArrayOf(0xFFFFD3A8.toInt(), 0xFFFFB1C1.toInt(), 0xFFE7B6FF.toInt()), intArrayOf(0xFFFF9966.toInt(), 0xFFFFC48A.toInt()), 0xFFFF7043.toInt()),
-            Pal(5, intArrayOf(0xFFE4D6FF.toInt(), 0xFFCDBDFF.toInt(), 0xFFF7D6FF.toInt()), intArrayOf(0xFFA987F0.toInt(), 0xFFCDB8FF.toInt()), 0xFF8A5CF0.toInt()),
-            Pal(10, intArrayOf(0xFFFFF3A8.toInt(), 0xFFFFD6A5.toInt(), 0xFFFFB5D8.toInt()), intArrayOf(0xFFFFC93C.toInt(), 0xFFFFE59A.toInt()), 0xFFFF9F1C.toInt()),
-            Pal(0, intArrayOf(0xFFF4F4F4.toInt(), 0xFFD6D6D6.toInt(), 0xFFFAFAFA.toInt()), intArrayOf(0xFF9E9E9E.toInt(), 0xFFD0D0D0.toInt()), 0xFF212121.toInt(), "mono_theme")
-        )
-
-        private fun theme(p: SharedPreferences): Th {
-            val th = p.getInt("theme", 0)
-            if (th == 0 || !p.getBoolean("kawaii_unlocked", false)) {
-                return Th(intArrayOf(0xFF3A3A3A.toInt(), 0xFF262626.toInt()), intArrayOf(0xFF4A90D9.toInt(), 0xFF3B78B8.toInt()),
-                    0xFFEEEEEE.toInt(), 0xFFFFFFFF.toInt(), 0xFF4A90D9.toInt(), 0x33FFFFFF)
-            }
-            if (th == 2) {
-                return Th(intArrayOf(0xFF07050F.toInt(), 0xFF110B22.toInt(), 0xFF060D1A.toInt()), intArrayOf(0xFF3A2468.toInt(), 0xFF4D3188.toInt()),
-                    0xFFEBDDFF.toInt(), 0xFFEBDDFF.toInt(), 0xFFB388FF.toInt(), 0x33FFFFFF)
-            }
-            var pl = pals[p.getInt("palette", 0).coerceIn(0, pals.size - 1)]
-            val open = if (pl.flag.isNotEmpty()) p.getBoolean(pl.flag, false) else p.getInt("wins", 0) >= pl.need
-            if (!open) pl = pals[0]
-            val txt = if (pl.flag == "mono_theme") 0xFF222222.toInt() else 0xFF6A2C6B.toInt()
-            return Th(pl.bg, pl.btn, txt, txt, pl.accent, 0x44FFFFFF)
-        }
+        private val bgRes = intArrayOf(R.drawable.widget_bg_0, R.drawable.widget_bg_1, R.drawable.widget_bg_2, R.drawable.widget_bg_3, R.drawable.widget_bg_4, R.drawable.widget_bg_5, R.drawable.widget_bg_6, R.drawable.widget_bg_7)
+        private val btnRes = intArrayOf(R.drawable.widget_btn_0, R.drawable.widget_btn_1, R.drawable.widget_btn_2, R.drawable.widget_btn_3, R.drawable.widget_btn_4, R.drawable.widget_btn_5, R.drawable.widget_btn_6, R.drawable.widget_btn_7)
+        private val circleRes = intArrayOf(R.drawable.widget_circle_0, R.drawable.widget_circle_1, R.drawable.widget_circle_2, R.drawable.widget_circle_3, R.drawable.widget_circle_4, R.drawable.widget_circle_5, R.drawable.widget_circle_6, R.drawable.widget_circle_7)
 
         private fun toBitmap(d: Drawable, w: Int, h: Int): Bitmap {
             val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
@@ -121,20 +94,13 @@ class VadWidget : AppWidgetProvider() {
             return b
         }
 
-        private fun gradient(colors: IntArray, w: Int, h: Int, radiusPx: Float): Bitmap {
-            val g = GradientDrawable(GradientDrawable.Orientation.TL_BR, if (colors.size >= 2) colors else intArrayOf(colors[0], colors[0]))
-            g.cornerRadius = radiusPx
-            return toBitmap(g, w, h)
-        }
-
-        private fun barBitmap(pct: Int, th: Th): Bitmap {
-            val w = 400; val h = 16
+        private fun barBitmap(pct: Int, th: AppTheme.Colors, w: Int, h: Int): Bitmap {
             val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
             val c = Canvas(b)
             val p = Paint(Paint.ANTI_ALIAS_FLAG)
             p.color = th.track
             c.drawRoundRect(RectF(0f, 0f, w.toFloat(), h.toFloat()), h / 2f, h / 2f, p)
-            p.color = th.accent
+            p.shader = android.graphics.LinearGradient(0f, 0f, w.toFloat(), 0f, th.btn[0], th.accent, android.graphics.Shader.TileMode.CLAMP)
             val fw = (w * pct / 100f).coerceAtLeast(if (pct > 0) h.toFloat() else 0f)
             if (fw > 0) c.drawRoundRect(RectF(0f, 0f, fw, h.toFloat()), h / 2f, h / 2f, p)
             return b
@@ -147,7 +113,7 @@ class VadWidget : AppWidgetProvider() {
                 if (ids.isEmpty()) return
                 Strings.init(ctx)
                 val p = ctx.getSharedPreferences("vad", Context.MODE_PRIVATE)
-                val th = theme(p)
+                val th = AppTheme.of(p)
                 val kawaii = p.getBoolean("kawaii_unlocked", false)
                 val density = ctx.resources.displayMetrics.density
 
@@ -176,17 +142,15 @@ class VadWidget : AppWidgetProvider() {
                     val opt = mgr.getAppWidgetOptions(id)
                     val wDp = opt.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 250).let { if (it <= 0) 250 else it }
                     val hDp = opt.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_HEIGHT, 70).let { if (it <= 0) 70 else it }
-                    val wPx = (wDp * density).toInt().coerceIn(40, 700)
-                    val hPx = (hDp * density).toInt().coerceIn(40, 700)
                     val small = wDp < 110
                     val rv = RemoteViews(ctx.packageName, if (small) R.layout.widget_vad_small else R.layout.widget_vad)
-                    rv.setImageViewBitmap(R.id.w_bg, gradient(th.bg, wPx, hPx, 20 * density))
-                    rv.setImageViewBitmap(R.id.w_btn_bg, gradient(th.btn, 320, 96, 48f))
+                    rv.setInt(R.id.w_root, "setBackgroundResource", bgRes[th.idx])
                     rv.setTextColor(R.id.w_btn, th.btnText)
 
                     if (small) {
+                        rv.setInt(R.id.w_btn, "setBackgroundResource", circleRes[th.idx])
                         rv.setTextViewText(R.id.w_btn, if (dlActive) "$dlPct%" else "⬇")
-                        rv.setOnClickPendingIntent(R.id.w_btn_wrap, if (dlActive) openPi else pastePi)
+                        rv.setOnClickPendingIntent(R.id.w_btn, if (dlActive) openPi else pastePi)
                         rv.setOnClickPendingIntent(R.id.w_root, openPi)
                     } else {
                         val tiny = hDp < 64
@@ -204,16 +168,19 @@ class VadWidget : AppWidgetProvider() {
                             rv.setTextViewText(R.id.w_info, if (dlInfo.isNotBlank()) dlInfo else "$dlPct%")
                             rv.setViewVisibility(R.id.w_info, if (tiny) View.GONE else View.VISIBLE)
                             rv.setViewVisibility(R.id.w_bar, View.VISIBLE)
-                            rv.setImageViewBitmap(R.id.w_bar, barBitmap(dlPct, th))
-                            rv.setViewVisibility(R.id.w_btn_wrap, View.GONE)
+                            val barH = (8 * density).toInt().coerceAtLeast(6)
+                            val barW = ((wDp - 16 - 8 - (if (girl != null && !tiny) 56 else 0)) * density).toInt().coerceIn(60, 900)
+                            rv.setImageViewBitmap(R.id.w_bar, barBitmap(dlPct, th, barW, barH))
+                            rv.setViewVisibility(R.id.w_btn, View.GONE)
                         } else {
                             val key = when (mood) { "happy" -> "w_done"; "sad" -> "w_error"; else -> "w_idle" }
                             rv.setTextViewText(R.id.w_status, Strings.t(if (kawaii) key + "_k" else key))
                             rv.setViewVisibility(R.id.w_info, View.GONE)
                             rv.setViewVisibility(R.id.w_bar, View.GONE)
-                            rv.setViewVisibility(R.id.w_btn_wrap, View.VISIBLE)
+                            rv.setViewVisibility(R.id.w_btn, View.VISIBLE)
+                            rv.setInt(R.id.w_btn, "setBackgroundResource", btnRes[th.idx])
                             rv.setTextViewText(R.id.w_btn, Strings.t("w_btn"))
-                            rv.setOnClickPendingIntent(R.id.w_btn_wrap, pastePi)
+                            rv.setOnClickPendingIntent(R.id.w_btn, pastePi)
                         }
                         rv.setOnClickPendingIntent(R.id.w_img, openPi)
                         rv.setOnClickPendingIntent(R.id.w_status, openPi)

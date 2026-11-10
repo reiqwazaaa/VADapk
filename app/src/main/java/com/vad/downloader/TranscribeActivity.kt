@@ -55,8 +55,9 @@ class TranscribeActivity : Activity() {
     private lateinit var startBtn: Button
     private lateinit var stopBtn: Button
     private lateinit var status: TextView
-    private lateinit var bar: ProgressBar
+    private lateinit var bar: SmoothBar
     private lateinit var result: TextView
+    private lateinit var resultBox: ScrollView
     private lateinit var saveRow: LinearLayout
 
     private val segs = ArrayList<Seg>()
@@ -77,15 +78,16 @@ class TranscribeActivity : Activity() {
     private fun t(k: String) = Strings.t(k)
     private fun f(k: String, vararg a: Any?) = Strings.f(k, *a)
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-    private val ink = Color.parseColor("#4A2A5A")
-    private val pink = Color.parseColor("#FF5FA2")
+    private val th by lazy { AppTheme.of(getSharedPreferences("vad", Context.MODE_PRIVATE)) }
+    private val ink get() = th.text
+    private val panel get() = if (th.dark) 0x1FFFFFFF else 0x99FFFFFF.toInt()
 
     private fun btn(text: String, click: () -> Unit) = Button(this).apply {
         this.text = text
         isAllCaps = false
-        setTextColor(Color.WHITE)
         textSize = 14f
-        background = GradientDrawable().apply { setColor(pink); cornerRadius = dp(14).toFloat() }
+        setTextColor(th.btnText)
+        background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, th.btn).apply { cornerRadius = dp(22).toFloat() }
         setPadding(dp(14), dp(10), dp(14), dp(10))
         setOnClickListener { click() }
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
@@ -99,18 +101,24 @@ class TranscribeActivity : Activity() {
     }
 
     private fun spinner(items: List<String>) = Spinner(this).apply {
+        setPopupBackgroundDrawable(GradientDrawable().apply { setColor(if (th.dark) th.bg[0] else 0xFFFFFFFF.toInt()); cornerRadius = dp(12).toFloat() })
+        background = GradientDrawable().apply { setColor(panel); cornerRadius = dp(14).toFloat() }
+        setPadding(dp(8), dp(6), dp(8), dp(6))
         adapter = object : ArrayAdapter<String>(this@TranscribeActivity, android.R.layout.simple_spinner_dropdown_item, items) {
             override fun getView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
                 (super.getView(position, convertView, parent) as TextView).also { it.setTextColor(ink) }
+            override fun getDropDownView(position: Int, convertView: View?, parent: android.view.ViewGroup): View =
+                (super.getDropDownView(position, convertView, parent) as TextView).also { it.setTextColor(ink); it.setBackgroundColor(0) }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Strings.init(applicationContext)
-        window.decorView.setBackgroundColor(Color.parseColor("#FFF1F8"))
+        window.decorView.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, if (th.bg.size >= 2) th.bg else intArrayOf(th.bg[0], th.bg[0]))
 
         val col = LinearLayout(this).apply {
+            descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(24))
         }
@@ -148,13 +156,13 @@ class TranscribeActivity : Activity() {
         col.addView(startBtn)
         col.addView(stopBtn)
 
-        bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
+        bar = SmoothBar(this).apply {
             visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(10) }
+            setColors(if (th.dark) 0x33FFFFFF else 0x55FFFFFF, th.btn[0], th.accent)
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(10)).apply { topMargin = dp(12) }
         }
         col.addView(bar)
-        status = TextView(this).apply { setTextColor(ink); textSize = 13f; setPadding(0, dp(6), 0, dp(6)) }
+        status = TextView(this).apply { setTextColor(ink); textSize = 13f; setPadding(0, dp(6), 0, dp(6)); minLines = 3 }
         col.addView(status)
 
         saveRow = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
@@ -166,10 +174,21 @@ class TranscribeActivity : Activity() {
         result = TextView(this).apply {
             setTextColor(ink)
             textSize = 14f
-            setTextIsSelectable(true)
-            setPadding(0, dp(12), 0, 0)
+            setPadding(dp(10), dp(8), dp(10), dp(8))
         }
-        col.addView(result)
+        // Окно результата фиксированной высоты со своей прокруткой: от новых строк страница не «ползёт»
+        resultBox = ScrollView(this).apply {
+            descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+            background = GradientDrawable().apply { setColor(panel); cornerRadius = dp(14).toFloat() }
+            isVerticalScrollBarEnabled = true
+            addView(result)
+            setOnTouchListener { v, e ->
+                v.parent.requestDisallowInterceptTouchEvent(e.action != android.view.MotionEvent.ACTION_UP && e.action != android.view.MotionEvent.ACTION_CANCEL)
+                false
+            }
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(280)).apply { topMargin = dp(8) }
+        }
+        col.addView(resultBox)
 
         setContentView(ScrollView(this).apply { addView(col); isFillViewport = true })
         if (!WhisperLib.available) {
@@ -220,11 +239,11 @@ class TranscribeActivity : Activity() {
         status.text = s
         if (progress >= 0) {
             bar.visibility = View.VISIBLE
-            bar.isIndeterminate = false
+            bar.indeterminate = false
             bar.progress = progress
         } else {
             bar.visibility = if (running) View.VISIBLE else View.GONE
-            bar.isIndeterminate = true
+            bar.indeterminate = true
         }
     }
 
@@ -242,6 +261,7 @@ class TranscribeActivity : Activity() {
         saveRow.visibility = View.GONE
         startBtn.visibility = View.GONE
         stopBtn.visibility = View.VISIBLE
+        result.setTextIsSelectable(false)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         try {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
@@ -270,6 +290,7 @@ class TranscribeActivity : Activity() {
             startBtn.visibility = View.VISIBLE
             stopBtn.visibility = View.GONE
             saveRow.visibility = if (synchronized(segs) { segs.isNotEmpty() }) View.VISIBLE else View.GONE
+            result.setTextIsSelectable(true)
         }
     }
 
@@ -324,7 +345,11 @@ class TranscribeActivity : Activity() {
                     if (s.isEmpty()) return
                     val seg = Seg(t0, t1, s)
                     synchronized(segs) { segs.add(seg) }
-                    ui.post { result.append(stamp(t0) + " " + s + "\n") }
+                    ui.post {
+                        val atEnd = resultBox.scrollY + resultBox.height >= result.height - dp(40)
+                        result.append(stamp(t0) + " " + s + "\n")
+                        if (atEnd) resultBox.post { resultBox.fullScroll(View.FOCUS_DOWN) }
+                    }
                 }
                 override fun onProgress(p: Int) { setStatus(f("tr_run", p), p) }
             })
