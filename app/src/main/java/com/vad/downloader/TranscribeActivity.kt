@@ -41,8 +41,6 @@ import java.net.URL
  * Файл → ffmpeg (16 кГц моно float) → whisper → сегменты с временем → перевод по сегментам → .txt / .srt.
  */
 class TranscribeActivity : Activity() {
-    private class Seg(val t0: Long, val t1: Long, val text: String, var tr: String = "")
-
     private val ui = Handler(Looper.getMainLooper())
     private val reqPick = 71
     private var uri: Uri? = null
@@ -60,11 +58,7 @@ class TranscribeActivity : Activity() {
     private lateinit var resultBox: ScrollView
     private lateinit var saveRow: LinearLayout
 
-    private val segs = ArrayList<Seg>()
-    @Volatile private var running = false
-    @Volatile private var stopped = false
-    @Volatile private var ffProc: Process? = null
-    private var wake: PowerManager.WakeLock? = null
+    private val running get() = Transcriber.running
 
     private val models = listOf(
         Triple("ggml-base-q5_1.bin", "tr_model_fast", 57L),
@@ -197,9 +191,48 @@ class TranscribeActivity : Activity() {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        if (running) stop()
+    private val listener = object : Transcriber.Listener {
+        override fun onState() { ui.post { showState() } }
+        override fun onSegment(seg: Transcriber.Seg) {
+            ui.post {
+                val atEnd = resultBox.scrollY + resultBox.height >= result.height - dp(40)
+                result.append(stamp(seg.t0) + " " + seg.text + "\n")
+                if (atEnd) resultBox.post { resultBox.fullScroll(View.FOCUS_DOWN) }
+            }
+        }
+        override fun onDone() {
+            ui.post {
+                result.text = render(false)
+                showState()
+            }
+        }
+    }
+
+    /** Показывает текущее состояние задания (оно живёт в службе, окно можно закрывать и открывать). */
+    private fun showState() {
+        val r = Transcriber.running
+        status.text = Transcriber.status
+        if (r) {
+            bar.visibility = View.VISIBLE
+            if (Transcriber.progress >= 0) { bar.indeterminate = false; bar.progress = Transcriber.progress } else bar.indeterminate = true
+        } else bar.visibility = View.GONE
+        startBtn.visibility = if (r) View.GONE else View.VISIBLE
+        stopBtn.visibility = if (r) View.VISIBLE else View.GONE
+        saveRow.visibility = if (!r && Transcriber.snapshot().isNotEmpty()) View.VISIBLE else View.GONE
+        result.setTextIsSelectable(!r)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Transcriber.listener = listener
+        Transcriber.opts?.let { baseName = it.baseName; uri = it.uri; fileLabel.text = it.baseName }
+        result.text = render(false)
+        showState()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        if (Transcriber.listener === listener) Transcriber.listener = null
     }
 
     // ------------------------------------------------------------ выбор файла
@@ -235,18 +268,6 @@ class TranscribeActivity : Activity() {
 
     // ------------------------------------------------------------ запуск
 
-    private fun setStatus(s: String, progress: Int = -1) = ui.post {
-        status.text = s
-        if (progress >= 0) {
-            bar.visibility = View.VISIBLE
-            bar.indeterminate = false
-            bar.progress = progress
-        } else {
-            bar.visibility = if (running) View.VISIBLE else View.GONE
-            bar.indeterminate = true
-        }
-    }
-
     private fun start() {
         val u = uri
         if (u == null) {
@@ -254,206 +275,46 @@ class TranscribeActivity : Activity() {
             return
         }
         if (running) return
-        running = true
-        stopped = false
-        synchronized(segs) { segs.clear() }
-        result.text = ""
-        saveRow.visibility = View.GONE
-        startBtn.visibility = View.GONE
-        stopBtn.visibility = View.VISIBLE
-        result.setTextIsSelectable(false)
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        try {
-            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "vad:transcribe").apply { acquire(6 * 3600_000L) }
-        } catch (_: Throwable) {
-        }
+        askBatteryThen { launch(u) }
+    }
+
+    private fun launch(u: Uri) {
         val model = models[modelSp.selectedItemPosition]
         val src = srcCodes[srcSp.selectedItemPosition]
         val dst = dstCodes[dstSp.selectedItemPosition]
-        Thread { work(u, model.first, src, dst) }.start()
+        result.text = ""
+        Transcriber.start(this, Transcriber.Opts(u, model.first, src, dst, baseName))
+        showState()
+    }
+
+    /** Чтобы работа шла при выключенном экране, просим отключить экономию энергии (не больше трёх раз). */
+    private fun askBatteryThen(go: () -> Unit) {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val prefs = getSharedPreferences("vad", Context.MODE_PRIVATE)
+            val asked = prefs.getInt("tr_batt_asked", 0)
+            if (pm.isIgnoringBatteryOptimizations(packageName) || asked >= 3) { go(); return }
+            prefs.edit().putInt("tr_batt_asked", asked + 1).apply()
+            android.app.AlertDialog.Builder(this)
+                .setTitle(t("tr_batt_title"))
+                .setMessage(t("tr_batt_msg"))
+                .setPositiveButton(t("tr_batt_ok")) { _, _ ->
+                    try {
+                        startActivity(Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+                    } catch (_: Throwable) {
+                    }
+                    go()
+                }
+                .setNegativeButton(t("tr_batt_later")) { _, _ -> go() }
+                .setOnCancelListener { }
+                .show()
+        } catch (_: Throwable) {
+            go()
+        }
     }
 
     private fun stop() {
-        stopped = true
-        WhisperLib.abort()
-        try { ffProc?.destroy() } catch (_: Throwable) {}
-    }
-
-    private fun finish(msg: String) {
-        running = false
-        ui.post {
-            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            try { wake?.let { if (it.isHeld) it.release() } } catch (_: Throwable) {}
-            status.text = msg
-            bar.visibility = View.GONE
-            startBtn.visibility = View.VISIBLE
-            stopBtn.visibility = View.GONE
-            saveRow.visibility = if (synchronized(segs) { segs.isNotEmpty() }) View.VISIBLE else View.GONE
-            result.setTextIsSelectable(true)
-        }
-    }
-
-    private fun work(u: Uri, modelFile: String, src: String, dst: String) {
-        var handle = 0L
-        val tmpIn = File(cacheDir, "tr_in.bin")
-        val raw = File(cacheDir, "tr.raw")
-        try {
-            // 1. модель
-            val model = File(File(filesDir, "whisper").apply { mkdirs() }, modelFile)
-            if (!model.isFile || model.length() < 1_000_000) downloadModel(modelFile, model)
-            if (stopped) return finish(t("tr_stopped"))
-
-            // 2. звук → 16 кГц float
-            setStatus(t("tr_prep"))
-            contentResolver.openInputStream(u)!!.use { ins -> tmpIn.outputStream().use { ins.copyTo(it) } }
-            if (stopped) return finish(t("tr_stopped"))
-            val ff = findFfmpeg() ?: throw RuntimeException("ffmpeg not found")
-            val p = ffmpegBuilder(ff, listOf("-y", "-hide_banner", "-loglevel", "error", "-i", tmpIn.absolutePath,
-                "-vn", "-ac", "1", "-ar", "16000", "-f", "f32le", raw.absolutePath)).redirectErrorStream(true).start()
-            ffProc = p
-            val ffOut = p.inputStream.bufferedReader().readText()
-            val code = p.waitFor()
-            ffProc = null
-            tmpIn.delete()
-            if (stopped) return finish(t("tr_stopped"))
-            if (code != 0 || !raw.isFile || raw.length() < 4000) throw RuntimeException(ffOut.trim().takeLast(200).ifBlank { "ffmpeg failed" })
-
-            // 3. модель перевода (до распознавания, чтобы ошибка сети всплыла сразу)
-            val srcTag = TranslateLanguage.fromLanguageTag(src)
-            var translator: com.google.mlkit.nl.translate.Translator? = null
-            var trNote = ""
-            if (dst.isNotEmpty()) {
-                try {
-                    val dstTag = TranslateLanguage.fromLanguageTag(dst)
-                    if (dstTag != null && (src == "auto" || srcTag != null)) {
-                        // для «авто» исходный язык уточним после распознавания
-                    }
-                } catch (_: Throwable) {
-                }
-            }
-
-            // 4. распознавание
-            setStatus(t("tr_loading"))
-            handle = WhisperLib.init(model.absolutePath)
-            if (handle == 0L) throw RuntimeException(t("tr_model_bad"))
-            val threads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
-            setStatus(f("tr_run", 0), 0)
-            val detected = WhisperLib.run(handle, raw.absolutePath, src, threads, object : WhisperLib.Callback {
-                override fun onSegment(t0: Long, t1: Long, text: ByteArray) {
-                    val s = String(text, Charsets.UTF_8).trim()
-                    if (s.isEmpty()) return
-                    val seg = Seg(t0, t1, s)
-                    synchronized(segs) { segs.add(seg) }
-                    ui.post {
-                        val atEnd = resultBox.scrollY + resultBox.height >= result.height - dp(40)
-                        result.append(stamp(t0) + " " + s + "\n")
-                        if (atEnd) resultBox.post { resultBox.fullScroll(View.FOCUS_DOWN) }
-                    }
-                }
-                override fun onProgress(p: Int) { setStatus(f("tr_run", p), p) }
-            })
-            WhisperLib.free(handle)
-            handle = 0L
-            raw.delete()
-            if (stopped) return finish(t("tr_stopped"))
-            if (synchronized(segs) { segs.isEmpty() }) return finish(if (detected.isEmpty()) t("tr_err_run") else t("tr_empty"))
-
-            // 5. перевод
-            if (dst.isNotEmpty()) {
-                val from = if (src == "auto") detected else src
-                val fromTag = TranslateLanguage.fromLanguageTag(from)
-                val toTag = TranslateLanguage.fromLanguageTag(dst)
-                if (fromTag == null || toTag == null) {
-                    trNote = f("tr_tr_unsupported", from)
-                } else if (fromTag != toTag) {
-                    try {
-                        translator = Translation.getClient(TranslatorOptions.Builder().setSourceLanguage(fromTag).setTargetLanguage(toTag).build())
-                        setStatus(t("tr_trdl"))
-                        Tasks.await(translator.downloadModelIfNeeded(DownloadConditions.Builder().build()))
-                        val all = synchronized(segs) { ArrayList(segs) }
-                        for ((i, s) in all.withIndex()) {
-                            if (stopped) break
-                            s.tr = try { Tasks.await(translator.translate(s.text)) } catch (_: Throwable) { "" }
-                            if (i % 5 == 0) setStatus(f("tr_trans", i + 1, all.size), (i + 1) * 100 / all.size)
-                        }
-                    } catch (e: Throwable) {
-                        trNote = f("tr_tr_fail", e.message ?: e.javaClass.simpleName)
-                    } finally {
-                        try { translator?.close() } catch (_: Throwable) {}
-                    }
-                }
-            }
-            ui.post { result.text = render(false) }
-            finish(if (stopped) t("tr_stopped") else f("tr_done", synchronized(segs) { segs.size }) + (if (trNote.isNotEmpty()) "\n$trNote" else ""))
-        } catch (e: Throwable) {
-            if (handle != 0L) try { WhisperLib.free(handle) } catch (_: Throwable) {}
-            finish(if (stopped) t("tr_stopped") else f("tr_err", e.message ?: e.javaClass.simpleName))
-        } finally {
-            tmpIn.delete()
-            raw.delete()
-        }
-    }
-
-    // ------------------------------------------------------------ модель
-
-    private fun downloadModel(name: String, dest: File) {
-        val part = File(dest.parentFile, "$name.part")
-        var conn: HttpURLConnection? = null
-        try {
-            conn = (URL("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/$name").openConnection() as HttpURLConnection).apply {
-                connectTimeout = 20000
-                readTimeout = 30000
-                instanceFollowRedirects = true
-            }
-            if (conn.responseCode !in 200..299) throw RuntimeException("HTTP " + conn.responseCode)
-            val total = conn.contentLengthLong
-            var done = 0L
-            var lastP = -1
-            conn.inputStream.use { ins ->
-                part.outputStream().use { out ->
-                    val buf = ByteArray(64 * 1024)
-                    while (true) {
-                        if (stopped) return
-                        val n = ins.read(buf)
-                        if (n < 0) break
-                        out.write(buf, 0, n)
-                        done += n
-                        val pr = if (total > 0) (done * 100 / total).toInt() else 0
-                        if (pr != lastP) { lastP = pr; setStatus(f("tr_dl_model", pr), pr) }
-                    }
-                }
-            }
-            if (total > 0 && done != total) throw RuntimeException(t("tr_model_bad"))
-            if (!part.renameTo(dest)) throw RuntimeException("rename failed")
-        } finally {
-            conn?.disconnect()
-            if (!dest.isFile) part.delete()
-        }
-    }
-
-    // ------------------------------------------------------------ ffmpeg (как в конвертере)
-
-    private fun findFfmpeg(): File? {
-        val lib = File(applicationInfo.nativeLibraryDir, "libffmpeg.so")
-        if (lib.isFile) return lib
-        val base = File(noBackupFilesDir, "youtubedl-android/packages/ffmpeg")
-        return base.walkTopDown().firstOrNull { it.isFile && (it.name == "ffmpeg" || it.name == "libffmpeg.so") }
-    }
-
-    private fun ffmpegBuilder(bin: File, args: List<String>): ProcessBuilder {
-        val pb = ProcessBuilder(listOf(bin.absolutePath) + args)
-        val base = File(noBackupFilesDir, "youtubedl-android/packages/ffmpeg")
-        val dirs = ArrayList<String>()
-        for (sub in listOf("usr/lib", "lib", "usr/lib64")) {
-            val d = File(base, sub)
-            if (d.isDirectory) dirs.add(d.absolutePath)
-        }
-        dirs.add(applicationInfo.nativeLibraryDir)
-        System.getenv("LD_LIBRARY_PATH")?.let { if (it.isNotEmpty()) dirs.add(it) }
-        pb.environment()["LD_LIBRARY_PATH"] = dirs.joinToString(":")
-        pb.environment()["TMPDIR"] = cacheDir.absolutePath
-        return pb
+        Transcriber.stop()
     }
 
     // ------------------------------------------------------------ вывод
@@ -473,25 +334,21 @@ class TranscribeActivity : Activity() {
 
     private fun render(withTimes: Boolean): String {
         val sb = StringBuilder()
-        synchronized(segs) {
-            for (s in segs) {
-                sb.append(stamp(s.t0)).append(' ').append(s.text).append('\n')
-                if (s.tr.isNotEmpty()) sb.append("    ").append(s.tr).append('\n')
-            }
+        for (s in Transcriber.snapshot()) {
+            sb.append(stamp(s.t0)).append(' ').append(s.text).append('\n')
+            if (s.tr.isNotEmpty()) sb.append("    ").append(s.tr).append('\n')
         }
         return sb.toString()
     }
 
     private fun srt(): String {
         val sb = StringBuilder()
-        synchronized(segs) {
-            for ((i, s) in segs.withIndex()) {
-                sb.append(i + 1).append('\n')
-                sb.append(srtTime(s.t0)).append(" --> ").append(srtTime(maxOf(s.t1, s.t0 + 50))).append('\n')
-                sb.append(s.text).append('\n')
-                if (s.tr.isNotEmpty()) sb.append(s.tr).append('\n')
-                sb.append('\n')
-            }
+        for ((i, s) in Transcriber.snapshot().withIndex()) {
+            sb.append(i + 1).append('\n')
+            sb.append(srtTime(s.t0)).append(" --> ").append(srtTime(maxOf(s.t1, s.t0 + 50))).append('\n')
+            sb.append(s.text).append('\n')
+            if (s.tr.isNotEmpty()) sb.append(s.tr).append('\n')
+            sb.append('\n')
         }
         return sb.toString()
     }
