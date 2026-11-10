@@ -22,6 +22,12 @@ android {
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
+        externalNativeBuild {
+            cmake {
+                abiFilters += listOf("arm64-v8a")
+                arguments += listOf("-DANDROID_STL=c++_shared")
+            }
+        }
     }
 
     // Одна и та же подпись у всех сборок - иначе Android пишет "конфликт пакетов" при обновлении
@@ -52,6 +58,15 @@ android {
         jvmTarget = "17"
     }
 
+    // Распознавание речи: whisper.cpp (клонируется в CI в app/src/main/cpp/whisper.cpp), только arm64
+    ndkVersion = "26.3.11579264"
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
     // Нужно, чтобы python/ffmpeg из библиотеки распаковались на диск
     packaging {
         jniLibs {
@@ -73,4 +88,7 @@ dependencies {
     implementation("com.github.junrar:junrar:7.5.5")
     implementation("org.apache.commons:commons-compress:1.26.2")
     implementation("org.tukaani:xz:1.9")
+
+    // Перевод текста на устройстве (модели языков скачиваются при первом использовании)
+    implementation("com.google.mlkit:translate:17.0.3")
 }

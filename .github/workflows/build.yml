@@ -10,6 +10,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Fetch whisper.cpp
+        run: git clone --depth 1 --branch v1.9.5 https://github.com/ggml-org/whisper.cpp app/src/main/cpp/whisper.cpp
+
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

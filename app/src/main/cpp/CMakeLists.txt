@@ -1,0 +1,27 @@
+cmake_minimum_required(VERSION 3.18)
+# Gradle для debug-сборки ставит Debug (-O0): для распознавания речи это в разы медленнее
+set(CMAKE_BUILD_TYPE Release)
+project(vadwhisper CXX C)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
+if (ANDROID_ABI STREQUAL "arm64-v8a")
+    set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+fp16" CACHE STRING "" FORCE)
+endif()
+
+# Исходники whisper.cpp клонирует CI (см. .github/workflows/build.yml)
+add_subdirectory(whisper.cpp whisper_build)
+
+add_library(vadwhisper SHARED jni.cpp)
+target_include_directories(vadwhisper PRIVATE whisper.cpp/include whisper.cpp/ggml/include)
+target_link_libraries(vadwhisper whisper)
+if (ANDROID)
+    find_library(LOG_LIB log)
+    target_link_libraries(vadwhisper ${LOG_LIB})
+endif()

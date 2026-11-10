@@ -477,6 +477,7 @@ class MainActivity : Activity() {
         item(t("subs_btn")) { showSubs() }
         item(t("rd_btn")) { tab = 6; applyTabFn?.invoke() }
         item(t("cv_btn")) { tab = 5; applyTabFn?.invoke() }
+        item(t("tr_btn")) { startActivity(Intent(this, TranscribeActivity::class.java)) }
         if (prefs.getBoolean("kawaii_unlocked", false)) item(t("date_btn")) { showDate() }
         dlg = AlertDialog.Builder(this)
             .setTitle(t("more_title"))
