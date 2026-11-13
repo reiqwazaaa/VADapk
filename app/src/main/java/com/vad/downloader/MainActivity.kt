@@ -1722,14 +1722,10 @@ class MainActivity : Activity() {
         }
         if (spec.kind == "video") {
             if (spec.gif) {
-                // «Скачать как GIF»: берём настоящий gif, а если его нет (например, Твиттер отдаёт mp4), переделываем видео в gif через ffmpeg
+                // «Скачать как GIF»: берём настоящий gif, а если его нет, качаем лучшее, что есть.
+                // В GIF видео превращает уже наш ffmpeg после загрузки (runDownloadNow), потому что
+                // --recode-video у yt-dlp тащит в GIF ещё и звук, и ffmpeg на этом падает.
                 req.addOption("-f", "best[ext=gif]/" + spec.fmt)
-                req.addOption("--recode-video", "gif")
-                val scale = if (spec.gifW > 0) ",scale=${spec.gifW}:-2:flags=lanczos" else ""
-                req.addOption(
-                    "--postprocessor-args",
-                    "VideoConvertor:-vf fps=${spec.gifFps}$scale,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse -loop 0"
-                )
             } else {
                 req.addOption("-f", spec.fmt)
             }
@@ -2057,6 +2053,7 @@ class MainActivity : Activity() {
 
     private fun cancelDownload() {
         try {
+            GifTool.cancel()
             YoutubeDL.getInstance().destroyProcessById(processId)
             log(t("log_stopping"))
         } catch (e: Throwable) {
@@ -2298,6 +2295,7 @@ class MainActivity : Activity() {
         savePending(urls, playlist, spec)
         DownloadService.start(this)
         Thread {
+            GifTool.reset()
             val tmp = File(cacheDir, "dl")
             if (!resume) File(cacheDir, "ytmp").deleteRecursively()
             var saved = 0
@@ -2314,40 +2312,60 @@ class MainActivity : Activity() {
                     var embed = spec.kind == "audio" || spec.subs.isNotEmpty()
                     while (true) {
                     try {
-                        val req = baseRequest(url, playlist)
-                        applySpec(spec, req, embed, url)
-                        req.addOption("--newline")
-                        val template = if (playlist)
-                            "${tmp.absolutePath}/%(playlist_title|PlayList)s/%(playlist_index)s - %(title).120s [%(id)s].%(ext)s"
-                        else
-                            "${tmp.absolutePath}/%(title).120s [%(id)s].%(ext)s"
-                        req.addOption("-o", template)
+                        // Пост в Твиттере: фото (оригинал) и гифки (настоящий GIF) забираем сами, видео остаётся за yt-dlp
+                        var skipYtdlp = false
+                        if (spec.kind == "video") {
+                            val proxy = prefs.getString("proxy", "").orEmpty()
+                            val post = TweetMedia.fetch(url, proxy)
+                            if (post != null && post.items.isNotEmpty()) {
+                                setStatus(prefix + t("st_tweet"))
+                                log(f("log_tweet_media", post.items.count { it.type == "photo" }, post.items.count { it.type == "gif" }, post.items.count { it.type == "video" }))
+                                if (qi.title.isEmpty()) qi.title = "@" + post.user + " \u00B7 " + post.id
+                                TweetMedia.saveMedia(this, post, tmp, proxy) { log(it) }
+                                skipYtdlp = post.items.none { it.type == "video" }
+                            }
+                        }
+                        if (!skipYtdlp) {
+                            val req = baseRequest(url, playlist)
+                            applySpec(spec, req, embed, url)
+                            req.addOption("--newline")
+                            val template = if (playlist)
+                                "${tmp.absolutePath}/%(playlist_title|PlayList)s/%(playlist_index)s - %(title).120s [%(id)s].%(ext)s"
+                            else
+                                "${tmp.absolutePath}/%(title).120s [%(id)s].%(ext)s"
+                            req.addOption("-o", template)
 
-                        YoutubeDL.getInstance().execute(req, processId) { progress, eta, line ->
-                            if (line.contains("Destination:")) {
-                                resetProgress()
-                                if (qi.title.isEmpty()) {
-                                    qi.title = line.substringAfter("Destination:").trim().substringAfterLast('/')
-                                        .substringBeforeLast('.').replace(Regex("\\s*\\[[^\\]]{6,}\\]$"), "")
+                            YoutubeDL.getInstance().execute(req, processId) { progress, eta, line ->
+                                if (line.contains("Destination:")) {
+                                    resetProgress()
+                                    if (qi.title.isEmpty()) {
+                                        qi.title = line.substringAfter("Destination:").trim().substringAfterLast('/')
+                                            .substringBeforeLast('.').replace(Regex("\\s*\\[[^\\]]{6,}\\]$"), "")
+                                    }
                                 }
-                            }
-                            val info = progressText(eta, line)?.let { prefix + it }
-                            runOnUiThread {
-                                if (info != null) { qi.info = info; qi.progress = smoothPercent }
-                                if (tab == 4 && System.currentTimeMillis() - lastQueueUi > 500) { lastQueueUi = System.currentTimeMillis(); refreshQueue() }
-                                if (info != null) progressBar.progress = smoothPercent
-                                else if (progress >= 0 && smoothPercent == 0) progressBar.progress = progress.toInt()
-                                statusText.text = info ?: (prefix + t("st_downloading") + " ${progress.toInt()}%")
-                            }
-                            if (info != null) {
-                                try { VadWidget.downloadProgress(this, qi.title, smoothPercent, info, queue.count { it.state == 0 }) } catch (_: Throwable) {}
-                                val now = System.currentTimeMillis()
-                                if (now - lastNotifyAt > 700) {
-                                    lastNotifyAt = now
-                                    DownloadService.update(this, t("n_title"), info, progress.toInt())
+                                val info = progressText(eta, line)?.let { prefix + it }
+                                runOnUiThread {
+                                    if (info != null) { qi.info = info; qi.progress = smoothPercent }
+                                    if (tab == 4 && System.currentTimeMillis() - lastQueueUi > 500) { lastQueueUi = System.currentTimeMillis(); refreshQueue() }
+                                    if (info != null) progressBar.progress = smoothPercent
+                                    else if (progress >= 0 && smoothPercent == 0) progressBar.progress = progress.toInt()
+                                    statusText.text = info ?: (prefix + t("st_downloading") + " ${progress.toInt()}%")
                                 }
+                                if (info != null) {
+                                    try { VadWidget.downloadProgress(this, qi.title, smoothPercent, info, queue.count { it.state == 0 }) } catch (_: Throwable) {}
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastNotifyAt > 700) {
+                                        lastNotifyAt = now
+                                        DownloadService.update(this, t("n_title"), info, progress.toInt())
+                                    }
+                                }
+                                if (!line.startsWith("[download]") || !line.contains("%")) log(line)
                             }
-                            if (!line.startsWith("[download]") || !line.contains("%")) log(line)
+                        }
+                        // «Скачать как GIF»: всё, что скачалось видео, переделываем в GIF; готовые .gif не трогаем никогда
+                        if (spec.kind == "video" && spec.gif) {
+                            setStatus(prefix + t("st_gif"))
+                            GifTool.convertAll(this, tmp, spec.gifW, spec.gifFps) { name, err -> log(f("log_gif_fail", name, err)) }
                         }
 
                         setStatus(f("st_saving", targetLabel()))
