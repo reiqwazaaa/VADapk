@@ -1,0 +1,89 @@
+name: Emulator smoke test
+
+# Запуск вручную: Actions → Emulator smoke test → Run workflow.
+# Собирает x86_64-сборку (в эмуляторе нет arm), ставит её в Android 14, качает контрольные ссылки и гоняет monkey.
+on:
+  workflow_dispatch:
+    inputs:
+      tweet_url:
+        description: "Ссылка на пост X/Твиттера с фото и/или гифкой (пусто = пропустить)"
+        required: false
+        default: ""
+      video_url:
+        description: "Прямая ссылка на видео для проверки «Скачать как GIF»"
+        required: false
+        default: "https://www.w3schools.com/html/mov_bbb.mp4"
+      gif_url:
+        description: "Прямая ссылка на готовый .gif (он не должен перекодироваться)"
+        required: false
+        default: "https://upload.wikimedia.org/wikipedia/commons/2/2c/Rotating_earth_%28large%29.gif"
+
+jobs:
+  emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VAD_ABIS: x86_64
+      VAD_CMAKE_ABIS: x86_64
+      TWEET_URL: ${{ inputs.tweet_url }}
+      VIDEO_URL: ${{ inputs.video_url }}
+      GIF_URL: ${{ inputs.gif_url }}
+      OUT: ci-out
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch whisper.cpp
+        run: git clone --depth 1 --branch v1.9.5 https://github.com/ggml-org/whisper.cpp app/src/main/cpp/whisper.cpp
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Build x86_64 debug APK
+        run: gradle assembleDebug --stacktrace
+
+      - name: Probe fxtwitter API
+        if: ${{ inputs.tweet_url != '' }}
+        run: |
+          mkdir -p "$OUT"
+          u=$(echo "$TWEET_URL" | sed -E 's#https?://[^/]+/([^/?#]+)/status(es)?/([0-9]+).*#\1/status/\3#')
+          echo "API path: $u"
+          curl -sS -m 30 -A "Mozilla/5.0" "https://api.fxtwitter.com/$u" -o "$OUT/fxtwitter.json" -w "HTTP %{http_code}\n" || true
+          jq '{code, message, tweet: {id: .tweet.id, author: .tweet.author.screen_name, media: .tweet.media}}' "$OUT/fxtwitter.json" || head -c 1500 "$OUT/fxtwitter.json"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run tests in emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          ram-size: 4096M
+          heap-size: 512M
+          disk-size: 6G
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -camera-front none
+          script: bash ci/emulator-test.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          [ -f "$OUT/summary.md" ] && cat "$OUT/summary.md" >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: emulator-results
+          path: ci-out/
+          if-no-files-found: ignore

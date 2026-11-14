@@ -19,12 +19,13 @@ android {
         // Номер сборки CI растёт сам, чтобы каждый следующий APK ставился поверх прошлого
         versionCode = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
         versionName = "1.0"
+        // Для проверки в эмуляторе CI собирает x86_64: VAD_ABIS=x86_64 VAD_CMAKE_ABIS=x86_64
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters += (System.getenv("VAD_ABIS") ?: "arm64-v8a,armeabi-v7a").split(",")
         }
         externalNativeBuild {
             cmake {
-                abiFilters += listOf("arm64-v8a")
+                abiFilters += (System.getenv("VAD_CMAKE_ABIS") ?: "arm64-v8a").split(",")
                 arguments += listOf("-DANDROID_STL=c++_shared")
             }
         }

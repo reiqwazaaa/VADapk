@@ -2310,7 +2310,9 @@ class MainActivity : Activity() {
                     resetProgress()
                     val prefix = if (urls.size > 1) "[${idx + 1}/${urls.size}] " else ""
                     var embed = spec.kind == "audio" || spec.subs.isNotEmpty()
+                    var tweetGot = 0
                     while (true) {
+                    tweetGot = 0
                     try {
                         // Пост в Твиттере: фото (оригинал) и гифки (настоящий GIF) забираем сами, видео остаётся за yt-dlp
                         var skipYtdlp = false
@@ -2321,7 +2323,7 @@ class MainActivity : Activity() {
                                 setStatus(prefix + t("st_tweet"))
                                 log(f("log_tweet_media", post.items.count { it.type == "photo" }, post.items.count { it.type == "gif" }, post.items.count { it.type == "video" }))
                                 if (qi.title.isEmpty()) qi.title = "@" + post.user + " \u00B7 " + post.id
-                                TweetMedia.saveMedia(this, post, tmp, proxy) { log(it) }
+                                tweetGot = TweetMedia.saveMedia(this, post, tmp, proxy) { log(it) }
                                 skipYtdlp = post.items.none { it.type == "video" }
                             }
                         }
@@ -2393,6 +2395,18 @@ class MainActivity : Activity() {
                             tmp.deleteRecursively()
                             tmp.mkdirs()
                             continue
+                        }
+                        if (tweetGot > 0) {
+                            // фото и гифки поста уже скачаны, а видео не вышло: не теряем то, что есть
+                            try {
+                                log(t("log_tweet_partial"))
+                                val part = saveToDownloads(tmp)
+                                saved += part.size
+                                val media = part.filter { it.name.substringAfterLast('.').lowercase() !in listOf("srt", "vtt", "ass", "lrc") }
+                                if (media.isNotEmpty()) addHistory(media)
+                            } catch (se: Throwable) {
+                                log(f("log_error", se.message))
+                            }
                         }
                         failed++
                         lastError = m
