@@ -35,7 +35,7 @@ object ErrorHints {
         Regex("HTTP Error 429|Too Many Requests", RegexOption.IGNORE_CASE) to "err_429",
         Regex("not available in your country|blocked it in your country|geo.?restrict|georestrict", RegexOption.IGNORE_CASE) to "err_geo",
         Regex("HTTP Error 403|Forbidden", RegexOption.IGNORE_CASE) to "err_403",
-        Regex("Unsupported URL", RegexOption.IGNORE_CASE) to "err_unsupported",
+        Regex("Unsupported URL|is not a valid URL", RegexOption.IGNORE_CASE) to "err_unsupported",
         Regex("Requested format is not available", RegexOption.IGNORE_CASE) to "err_format",
         Regex("live event will begin|Premieres in|is upcoming|will begin in", RegexOption.IGNORE_CASE) to "err_live",
         Regex("copyright", RegexOption.IGNORE_CASE) to "err_copyright",

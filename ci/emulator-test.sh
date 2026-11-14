@@ -58,6 +58,7 @@ C=$(crashes); [ -n "$C" ] && bad "падения при запуске: $(echo "
 run_dl() { # name url regex_of_expected_new_file timeout_s
   local name=$1 url=$2 re=$3 to=${4:-180}
   listdl > "$OUT/before_$name.txt"
+  local lc; lc=$(vadlog | wc -l)
   adb shell am start -n $PKG/.MainActivity -a com.vad.downloader.PASTE_DL --es url "$url" --ez bg false >/dev/null
   local t=0
   while [ $t -lt "$to" ]; do
@@ -70,7 +71,7 @@ run_dl() { # name url regex_of_expected_new_file timeout_s
   comm -13 "$OUT/before_$name.txt" "$OUT/after_$name.txt" > "$OUT/new_$name.txt"
   mkdir -p "$OUT/files/$name"
   adb pull /sdcard/Download/VAD/. "$OUT/files/$name/" >/dev/null 2>&1 || true
-  vadlog > "$OUT/vad_$name.log"
+  vadlog | tail -n +$((lc + 1)) > "$OUT/vad_$name.log"
   shot "$name"
   say "  новые файлы ($name): $(tr '\n' ';' < "$OUT/new_$name.txt")"
 }
@@ -93,10 +94,15 @@ for TW in ${TWEET_URL:-}; do
     EG=$(jq '[.tweet.media.all[]? | select(.type=="gif")] | length' "$OUT/fx_$N.json" 2>/dev/null || echo 0)
     EV=$(jq '[.tweet.media.all[]? | select(.type=="video")] | length' "$OUT/fx_$N.json" 2>/dev/null || echo 0)
     say "  API: фото $EP, гифок $EG, видео $EV; скачано: фото $PH, gif $GF"
-    if [ "$EP" -eq 0 ] && [ "$EG" -eq 0 ] && [ "$EV" -eq 0 ]; then warn "API не вернул медиа (формат ответа не tweet.media.all?) — сверять нечего"; fi
-    [ "$PH" -ge "$EP" ] && ok "фото поста скачаны ($PH из $EP)" || bad "фото скачано $PH из $EP"
-    if [ "$EG" -gt 0 ]; then [ "$GF" -ge "$EG" ] && ok "гифки сохранены как .gif ($GF из $EG)" || bad "гифок .gif $GF из $EG"; fi
-    if grep -Eiq 'gif[0-9]+\.mp4$' "$OUT/new_$N.txt"; then bad "после конвертации остался mp4 гифки"; fi
+    if [ "$EP" -eq 0 ] && [ "$EG" -eq 0 ] && [ "$EV" -eq 0 ]; then
+      warn "API не вернул медиа для этого поста — проверки пропущены"
+    else
+      [ "$PH" -ge "$EP" ] && ok "фото поста скачаны ($PH из $EP)" || bad "фото скачано $PH из $EP"
+      if [ "$EG" -gt 0 ]; then [ "$GF" -ge "$EG" ] && ok "гифки сохранены как .gif ($GF из $EG)" || bad "гифок .gif $GF из $EG"; fi
+      if [ "$EV" -gt 0 ]; then grep -Eiq '\.(mp4|webm|mkv)$' "$OUT/new_$N.txt" && ok "видео поста скачано" || bad "видео поста не скачано"; fi
+      if grep -Eiq 'gif[0-9]+\.mp4$' "$OUT/new_$N.txt"; then bad "после конвертации остался mp4 гифки"; fi
+      grep -q "В посте\|Post media" "$OUT/vad_$N.log" && ok "приложение определило медиа поста" || bad "в логе нет строки про медиа поста"
+    fi
   else
     warn "ответ API fxtwitter не получен (HTTP $HC), число файлов не сверить (фото $PH, gif $GF)"
   fi
@@ -104,7 +110,6 @@ for TW in ${TWEET_URL:-}; do
     [ -f "$f" ] || continue
     case "$f" in *.jpg|*.jpeg|*.png|*.webp|*.gif) file -b "$f" | grep -Eiq 'image|GIF' || bad "битый файл: $(basename "$f") ($(file -b "$f"))";; esac
   done
-  grep -q "В посте\|Post media" "$OUT/vad_$N.log" && ok "приложение определило медиа поста" || bad "в логе нет строки про медиа поста"
 done
 
 # --- 3. обычное видео с включённым «Скачать как GIF»
