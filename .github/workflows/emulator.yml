@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tweet_url:
-        description: "Ссылка на пост X/Твиттера с фото и/или гифкой (пусто = пропустить)"
+        description: "Ссылки на посты X/Твиттера через пробел (фото, гифки, видео); пусто = пропустить"
         required: false
         default: ""
       video_url:
@@ -46,15 +46,6 @@ jobs:
 
       - name: Build x86_64 debug APK
         run: gradle assembleDebug --stacktrace
-
-      - name: Probe fxtwitter API
-        if: ${{ inputs.tweet_url != '' }}
-        run: |
-          mkdir -p "$OUT"
-          u=$(echo "$TWEET_URL" | sed -E 's#https?://[^/]+/([^/?#]+)/status(es)?/([0-9]+).*#\1/status/\3#')
-          echo "API path: $u"
-          curl -sS -m 30 -A "Mozilla/5.0" "https://api.fxtwitter.com/$u" -o "$OUT/fxtwitter.json" -w "HTTP %{http_code}\n" || true
-          jq '{code, message, tweet: {id: .tweet.id, author: .tweet.author.screen_name, media: .tweet.media}}' "$OUT/fxtwitter.json" || head -c 1500 "$OUT/fxtwitter.json"
 
       - name: Enable KVM
         run: |

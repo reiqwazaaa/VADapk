@@ -26,7 +26,13 @@ say ""
 APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
 adb install -r -g "$APK" >/dev/null 2>&1 && ok "APK установлен ($(basename "$APK"), $(du -h "$APK" | cut -f1))" || { bad "APK не установился"; exit 1; }
 
-crashes() { grep -E "FATAL EXCEPTION|ANR in|Fatal signal|UnsatisfiedLinkError|has died" "$OUT/logcat.txt" | grep -v "adbd" | head -${1:-10}; }
+# только наше приложение: системные процессы (Play Services и пр.) в эмуляторе падают сами по себе
+crashes() {
+  {
+    grep -A4 "FATAL EXCEPTION" "$OUT/logcat.txt" | grep -E "Process: $PKG|$PKG" | head -3
+    grep -E "Fatal signal.*\($PKG\)|ANR in $PKG|Process $PKG .*has died|UnsatisfiedLinkError" "$OUT/logcat.txt" | head -5
+  } | head -"${1:-10}"
+}
 
 seed_prefs() { # $1 = gif_video true|false
   adb shell am force-stop $PKG
@@ -69,30 +75,37 @@ run_dl() { # name url regex_of_expected_new_file timeout_s
   say "  новые файлы ($name): $(tr '\n' ';' < "$OUT/new_$name.txt")"
 }
 
-# --- 2. пост Твиттера
-if [ -n "${TWEET_URL:-}" ]; then
-  say ""; say "## Пост Твиттера: $TWEET_URL"
+# --- 2. посты Твиттера (одна или несколько ссылок через пробел)
+TI=0
+for TW in ${TWEET_URL:-}; do
+  TI=$((TI + 1)); N="tweet$TI"
+  say ""; say "## Пост Твиттера $TI: $TW"
+  API=$(echo "$TW" | sed -E 's#https?://[^/]+/([^/?\#]+)/status(es)?/([0-9]+).*#\1/status/\3#')
+  HC=$(curl -sS -m 30 -A "Mozilla/5.0" "https://api.fxtwitter.com/$API" -o "$OUT/fx_$N.json" -w "%{http_code}" 2>/dev/null || echo 000)
+  say "  fxtwitter: HTTP $HC"
+  jq -c '{code, message, media: .tweet.media}' "$OUT/fx_$N.json" 2>/dev/null | cut -c1-900 | sed 's/^/    /' | tee -a "$SUM"
   seed_prefs false; adb shell am start -n $PKG/.MainActivity >/dev/null; sleep 8
-  run_dl tweet "$TWEET_URL" '\.(jpg|jpeg|png|webp|gif|mp4)$' 150
-  PH=$(grep -Eic '\.(jpg|jpeg|png|webp)$' "$OUT/new_tweet.txt")
-  GF=$(grep -Eic '\.gif$' "$OUT/new_tweet.txt")
-  if [ -f "$OUT/fxtwitter.json" ] && command -v jq >/dev/null; then
-    EP=$(jq '[.tweet.media.all[]? | select(.type=="photo")] | length' "$OUT/fxtwitter.json" 2>/dev/null || echo 0)
-    EG=$(jq '[.tweet.media.all[]? | select(.type=="gif")] | length' "$OUT/fxtwitter.json" 2>/dev/null || echo 0)
-    EV=$(jq '[.tweet.media.all[]? | select(.type=="video")] | length' "$OUT/fxtwitter.json" 2>/dev/null || echo 0)
+  run_dl "$N" "$TW" '\.(jpg|jpeg|png|webp|gif|mp4)$' 150
+  PH=$(grep -Eic '\.(jpg|jpeg|png|webp)$' "$OUT/new_$N.txt")
+  GF=$(grep -Eic '\.gif$' "$OUT/new_$N.txt")
+  if [ "$HC" = "200" ] && command -v jq >/dev/null; then
+    EP=$(jq '[.tweet.media.all[]? | select(.type=="photo")] | length' "$OUT/fx_$N.json" 2>/dev/null || echo 0)
+    EG=$(jq '[.tweet.media.all[]? | select(.type=="gif")] | length' "$OUT/fx_$N.json" 2>/dev/null || echo 0)
+    EV=$(jq '[.tweet.media.all[]? | select(.type=="video")] | length' "$OUT/fx_$N.json" 2>/dev/null || echo 0)
     say "  API: фото $EP, гифок $EG, видео $EV; скачано: фото $PH, gif $GF"
-    [ "$PH" -ge "$EP" ] && ok "все фото поста скачаны ($PH из $EP)" || bad "фото скачано $PH из $EP"
-    [ "$EG" -eq 0 ] || { [ "$GF" -ge "$EG" ] && ok "гифки сохранены как .gif ($GF из $EG)" || bad "гифок .gif $GF из $EG"; }
-    if grep -Eiq 'gif[0-9]+\.mp4$' "$OUT/new_tweet.txt"; then bad "после конвертации остался mp4 гифки"; fi
+    if [ "$EP" -eq 0 ] && [ "$EG" -eq 0 ] && [ "$EV" -eq 0 ]; then warn "API не вернул медиа (формат ответа не tweet.media.all?) — сверять нечего"; fi
+    [ "$PH" -ge "$EP" ] && ok "фото поста скачаны ($PH из $EP)" || bad "фото скачано $PH из $EP"
+    if [ "$EG" -gt 0 ]; then [ "$GF" -ge "$EG" ] && ok "гифки сохранены как .gif ($GF из $EG)" || bad "гифок .gif $GF из $EG"; fi
+    if grep -Eiq 'gif[0-9]+\.mp4$' "$OUT/new_$N.txt"; then bad "после конвертации остался mp4 гифки"; fi
   else
-    warn "ответ API fxtwitter не получен, сверить число файлов нельзя (фото $PH, gif $GF)"
+    warn "ответ API fxtwitter не получен (HTTP $HC), число файлов не сверить (фото $PH, gif $GF)"
   fi
-  for f in "$OUT"/files/tweet/*; do
+  for f in "$OUT"/files/"$N"/*; do
     [ -f "$f" ] || continue
     case "$f" in *.jpg|*.jpeg|*.png|*.webp|*.gif) file -b "$f" | grep -Eiq 'image|GIF' || bad "битый файл: $(basename "$f") ($(file -b "$f"))";; esac
   done
-  grep -q "В посте\|Post media" "$OUT/vad_tweet.log" && ok "приложение определило медиа поста" || bad "в логе нет строки про медиа поста"
-fi
+  grep -q "В посте\|Post media" "$OUT/vad_$N.log" && ok "приложение определило медиа поста" || bad "в логе нет строки про медиа поста"
+done
 
 # --- 3. обычное видео с включённым «Скачать как GIF»
 if [ -n "${VIDEO_URL:-}" ]; then
@@ -135,6 +148,10 @@ shot 99_after_monkey
 C=$(crashes 20)
 if [ -n "$C" ]; then bad "в logcat есть падения:"; echo "$C" | sed 's/^/    /' | tee -a "$SUM"; else ok "в logcat нет FATAL/ANR/UnsatisfiedLinkError"; fi
 vadlog > "$OUT/vad.log"
+say ""; say "## Строки лога приложения с ошибками (если есть)"
+grep -iE "error|fail|exception|не удалось|ошибка" "$OUT/vad.log" | tail -15 | sed 's/^/    /' | tee -a "$SUM"
+say ""; say "## Строки лога про Твиттер и GIF"
+grep -iE "tweet|post media|gif|В посте|photo" "$OUT"/vad_*.log 2>/dev/null | tail -20 | sed 's/^/    /' | tee -a "$SUM"
 kill $LOGPID 2>/dev/null || true
 say ""; [ $FAIL -eq 0 ] && say "**Итог: всё прошло**" || say "**Итог: есть неудачи**"
 exit $FAIL
