@@ -93,7 +93,7 @@ class MainActivity : Activity() {
     // 0 - обычная, 1 - няшная (день), 2 - няшная (ночь)
     private var theme = 0
     private val kawaii: Boolean get() = theme > 0
-    private val night: Boolean get() = theme == 2
+    private val night: Boolean get() = theme >= 2 // тёмные темы: 2 ночь, 3 океан, 4 лес
     companion object {
         @Volatile private var inst: MainActivity? = null
         val instance: MainActivity? get() = inst
@@ -154,7 +154,10 @@ class MainActivity : Activity() {
         Palette("pal_lavender", 5, intArrayOf(0xFFE4D6FF.toInt(), 0xFFCDBDFF.toInt(), 0xFFF7D6FF.toInt()), intArrayOf(0xFFA987F0.toInt(), 0xFFCDB8FF.toInt()), 0xFF8A5CF0.toInt()),
         Palette("pal_lemon", 10, intArrayOf(0xFFFFF3A8.toInt(), 0xFFFFD6A5.toInt(), 0xFFFFB5D8.toInt()), intArrayOf(0xFFFFC93C.toInt(), 0xFFFFE59A.toInt()), 0xFFFF9F1C.toInt()),
         // монохромная тема: награда за победу над Ютой-тян в шахматах на сложном уровне
-        Palette("pal_mono", 0, intArrayOf(0xFFF4F4F4.toInt(), 0xFFD6D6D6.toInt(), 0xFFFAFAFA.toInt()), intArrayOf(0xFF9E9E9E.toInt(), 0xFFD0D0D0.toInt()), 0xFF212121.toInt(), "mono_theme")
+        Palette("pal_mono", 0, intArrayOf(0xFFF4F4F4.toInt(), 0xFFD6D6D6.toInt(), 0xFFFAFAFA.toInt()), intArrayOf(0xFF9E9E9E.toInt(), 0xFFD0D0D0.toInt()), 0xFF212121.toInt(), "mono_theme"),
+        // новые палитры дописаны в конец: в prefs хранится номер палитры, порядок менять нельзя
+        Palette("pal_sky", 15, intArrayOf(0xFFC7E9FF.toInt(), 0xFFB3F0FF.toInt(), 0xFFDDE6FF.toInt()), intArrayOf(0xFF6CC3F5.toInt(), 0xFFA9DEFB.toInt()), 0xFF1E88E5.toInt()),
+        Palette("pal_cherry", 20, intArrayOf(0xFFFFC4CC.toInt(), 0xFFFFA9B8.toInt(), 0xFFFFD9DF.toInt()), intArrayOf(0xFFFF6F85.toInt(), 0xFFFFA0B0.toInt()), 0xFFE53950.toInt())
     )
     private fun palUnlocked(p: Palette) = if (p.flag.isNotEmpty()) prefs.getBoolean(p.flag, false) else wins() >= p.need
     private fun wins() = prefs.getInt("wins", 0)
@@ -163,16 +166,23 @@ class MainActivity : Activity() {
         return if (palUnlocked(p)) p else palettes[0]
     }
 
-    private val kawaiiText: Int get() = if (night) 0xFFEBDDFF.toInt() else if (palette.flag == "mono_theme") 0xFF222222.toInt() else 0xFF6A2C6B.toInt()
-    private val accent: Int get() = if (night) 0xFFB388FF.toInt() else palette.accent
-    private val logTextColor: Int get() = if (night) 0xFFD9C9F5.toInt() else 0xFF5A3A78.toInt()
+    // тёмные темы: ночь, океан, лес (номер темы 2, 3, 4)
+    private class DarkTheme(val bg: IntArray, val btn: IntArray, val text: Int, val accent: Int, val log: Int)
+    private val darkThemes = listOf(
+        DarkTheme(intArrayOf(0xFF07050F.toInt(), 0xFF110B22.toInt(), 0xFF060D1A.toInt()), intArrayOf(0xFF3A2468.toInt(), 0xFF4D3188.toInt()), 0xFFEBDDFF.toInt(), 0xFFB388FF.toInt(), 0xFFD9C9F5.toInt()),
+        DarkTheme(intArrayOf(0xFF030B14.toInt(), 0xFF06223A.toInt(), 0xFF03161F.toInt()), intArrayOf(0xFF0D5C7A.toInt(), 0xFF1479A0.toInt()), 0xFFD6F1FF.toInt(), 0xFF4DD0E1.toInt(), 0xFFBFE6F2.toInt()),
+        DarkTheme(intArrayOf(0xFF050E07.toInt(), 0xFF0C2214.toInt(), 0xFF08150F.toInt()), intArrayOf(0xFF1A5A30.toInt(), 0xFF24753F.toInt()), 0xFFE0F5DF.toInt(), 0xFF7CE08A.toInt(), 0xFFCBEAC9.toInt())
+    )
+    private val dark: DarkTheme get() = darkThemes[(theme - 2).coerceIn(0, darkThemes.size - 1)]
+
+    private val kawaiiText: Int get() = if (night) dark.text else if (palette.flag == "mono_theme") 0xFF222222.toInt() else 0xFF6A2C6B.toInt()
+    private val accent: Int get() = if (night) dark.accent else palette.accent
+    private val logTextColor: Int get() = if (night) dark.log else 0xFF5A3A78.toInt()
     private val panelColor: Int get() = if (night) 0x1FFFFFFF else 0x99FFFFFF.toInt()
     private val bgColors: IntArray
-        get() = if (night) intArrayOf(0xFF07050F.toInt(), 0xFF110B22.toInt(), 0xFF060D1A.toInt())
-        else palette.bg
+        get() = if (night) dark.bg else palette.bg
     private val btnColors: IntArray
-        get() = if (night) intArrayOf(0xFF3A2468.toInt(), 0xFF4D3188.toInt())
-        else palette.btn
+        get() = if (night) dark.btn else palette.btn
 
     @Volatile private var engineReady = false
     @Volatile private var busy = false
@@ -374,7 +384,7 @@ class MainActivity : Activity() {
     /** Секретная кнопка-кошечка: 3 нажатия открывают няшный режим, дальше переключает темы. */
     private fun onCatTap(v: View) {
         if (prefs.getBoolean("kawaii_unlocked", false)) {
-            theme = (theme + 1) % 3
+            theme = (theme + 1) % 5
             prefs.edit().putInt("theme", theme).apply()
             buildUi()
             return

@@ -7,7 +7,7 @@ object AppTheme {
     class Colors(
         val bg: IntArray, val btn: IntArray, val text: Int, val btnText: Int, val accent: Int,
         val track: Int, val dark: Boolean,
-        /** 0 обычная, 1 ночная, 2.. палитры — номер набора рисунков виджета */
+        /** 0 обычная, 1 ночная, 2.. палитры, затем океан и лес — номер набора рисунков виджета */
         val idx: Int
     )
 
@@ -20,7 +20,9 @@ object AppTheme {
         Pal(3, intArrayOf(0xFFFFD3A8.toInt(), 0xFFFFB1C1.toInt(), 0xFFE7B6FF.toInt()), intArrayOf(0xFFFF9966.toInt(), 0xFFFFC48A.toInt()), 0xFFFF7043.toInt()),
         Pal(5, intArrayOf(0xFFE4D6FF.toInt(), 0xFFCDBDFF.toInt(), 0xFFF7D6FF.toInt()), intArrayOf(0xFFA987F0.toInt(), 0xFFCDB8FF.toInt()), 0xFF8A5CF0.toInt()),
         Pal(10, intArrayOf(0xFFFFF3A8.toInt(), 0xFFFFD6A5.toInt(), 0xFFFFB5D8.toInt()), intArrayOf(0xFFFFC93C.toInt(), 0xFFFFE59A.toInt()), 0xFFFF9F1C.toInt()),
-        Pal(0, intArrayOf(0xFFF4F4F4.toInt(), 0xFFD6D6D6.toInt(), 0xFFFAFAFA.toInt()), intArrayOf(0xFF9E9E9E.toInt(), 0xFFD0D0D0.toInt()), 0xFF212121.toInt(), "mono_theme")
+        Pal(0, intArrayOf(0xFFF4F4F4.toInt(), 0xFFD6D6D6.toInt(), 0xFFFAFAFA.toInt()), intArrayOf(0xFF9E9E9E.toInt(), 0xFFD0D0D0.toInt()), 0xFF212121.toInt(), "mono_theme"),
+        Pal(15, intArrayOf(0xFFC7E9FF.toInt(), 0xFFB3F0FF.toInt(), 0xFFDDE6FF.toInt()), intArrayOf(0xFF6CC3F5.toInt(), 0xFFA9DEFB.toInt()), 0xFF1E88E5.toInt()),
+        Pal(20, intArrayOf(0xFFFFC4CC.toInt(), 0xFFFFA9B8.toInt(), 0xFFFFD9DF.toInt()), intArrayOf(0xFFFF6F85.toInt(), 0xFFFFA0B0.toInt()), 0xFFE53950.toInt())
     )
 
     fun of(p: SharedPreferences): Colors {
@@ -32,6 +34,14 @@ object AppTheme {
         if (th == 2) {
             return Colors(intArrayOf(0xFF07050F.toInt(), 0xFF110B22.toInt(), 0xFF060D1A.toInt()), intArrayOf(0xFF3A2468.toInt(), 0xFF4D3188.toInt()),
                 0xFFEBDDFF.toInt(), 0xFFEBDDFF.toInt(), 0xFFB388FF.toInt(), 0x33FFFFFF, true, 1)
+        }
+        if (th == 3) { // океан
+            return Colors(intArrayOf(0xFF030B14.toInt(), 0xFF06223A.toInt(), 0xFF03161F.toInt()), intArrayOf(0xFF0D5C7A.toInt(), 0xFF1479A0.toInt()),
+                0xFFD6F1FF.toInt(), 0xFFD6F1FF.toInt(), 0xFF4DD0E1.toInt(), 0x33FFFFFF, true, 2 + pals.size)
+        }
+        if (th == 4) { // лес
+            return Colors(intArrayOf(0xFF050E07.toInt(), 0xFF0C2214.toInt(), 0xFF08150F.toInt()), intArrayOf(0xFF1A5A30.toInt(), 0xFF24753F.toInt()),
+                0xFFE0F5DF.toInt(), 0xFFE0F5DF.toInt(), 0xFF7CE08A.toInt(), 0x33FFFFFF, true, 3 + pals.size)
         }
         var i = p.getInt("palette", 0).coerceIn(0, pals.size - 1)
         var pl = pals[i]

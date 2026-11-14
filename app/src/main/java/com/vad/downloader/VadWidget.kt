@@ -82,9 +82,9 @@ class VadWidget : AppWidgetProvider() {
             else -> when (m) { "happy" -> R.drawable.kawaii_girl_happy; "sad" -> R.drawable.kawaii_girl_sad; "wink" -> R.drawable.kawaii_girl_wink; else -> R.drawable.kawaii_girl }
         }
 
-        private val bgRes = intArrayOf(R.drawable.widget_bg_0, R.drawable.widget_bg_1, R.drawable.widget_bg_2, R.drawable.widget_bg_3, R.drawable.widget_bg_4, R.drawable.widget_bg_5, R.drawable.widget_bg_6, R.drawable.widget_bg_7)
-        private val btnRes = intArrayOf(R.drawable.widget_btn_0, R.drawable.widget_btn_1, R.drawable.widget_btn_2, R.drawable.widget_btn_3, R.drawable.widget_btn_4, R.drawable.widget_btn_5, R.drawable.widget_btn_6, R.drawable.widget_btn_7)
-        private val circleRes = intArrayOf(R.drawable.widget_circle_0, R.drawable.widget_circle_1, R.drawable.widget_circle_2, R.drawable.widget_circle_3, R.drawable.widget_circle_4, R.drawable.widget_circle_5, R.drawable.widget_circle_6, R.drawable.widget_circle_7)
+        private val bgRes = intArrayOf(R.drawable.widget_bg_0, R.drawable.widget_bg_1, R.drawable.widget_bg_2, R.drawable.widget_bg_3, R.drawable.widget_bg_4, R.drawable.widget_bg_5, R.drawable.widget_bg_6, R.drawable.widget_bg_7, R.drawable.widget_bg_8, R.drawable.widget_bg_9, R.drawable.widget_bg_10, R.drawable.widget_bg_11)
+        private val btnRes = intArrayOf(R.drawable.widget_btn_0, R.drawable.widget_btn_1, R.drawable.widget_btn_2, R.drawable.widget_btn_3, R.drawable.widget_btn_4, R.drawable.widget_btn_5, R.drawable.widget_btn_6, R.drawable.widget_btn_7, R.drawable.widget_btn_8, R.drawable.widget_btn_9, R.drawable.widget_btn_10, R.drawable.widget_btn_11)
+        private val circleRes = intArrayOf(R.drawable.widget_circle_0, R.drawable.widget_circle_1, R.drawable.widget_circle_2, R.drawable.widget_circle_3, R.drawable.widget_circle_4, R.drawable.widget_circle_5, R.drawable.widget_circle_6, R.drawable.widget_circle_7, R.drawable.widget_circle_8, R.drawable.widget_circle_9, R.drawable.widget_circle_10, R.drawable.widget_circle_11)
 
         private fun toBitmap(d: Drawable, w: Int, h: Int): Bitmap {
             val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)

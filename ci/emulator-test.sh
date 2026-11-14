@@ -139,6 +139,28 @@ if [ -n "${GIF_URL:-}" ]; then
   else warn "GIF_URL недоступен из раннера"; fi
 fi
 
+# --- 4b. все темы и палитры: приложение должно запускаться и не падать (особенно новые: темы 3-4, палитры 6-7)
+say ""; say "## Темы и палитры"
+for combo in "1 0" "1 5" "1 6" "1 7" "2 0" "3 0" "4 0"; do
+  set -- $combo
+  adb shell am force-stop $PKG
+  adb shell "run-as $PKG sh -c 'mkdir -p shared_prefs && cat > shared_prefs/vad.xml'" <<EOF2
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+  <boolean name="kawaii_unlocked" value="true" />
+  <int name="theme" value="$1" />
+  <int name="palette" value="$2" />
+  <int name="wins" value="99" />
+  <boolean name="clip_watch" value="false" />
+</map>
+EOF2
+  adb shell am start -n $PKG/.MainActivity >/dev/null; sleep 7
+  shot "theme_$1_pal_$2"
+  if adb shell pidof $PKG | grep -q .; then ok "тема $1, палитра $2: запустилось"; else bad "тема $1, палитра $2: приложение не работает"; fi
+done
+C=$(crashes); [ -n "$C" ] && bad "падения при смене тем: $(echo "$C" | head -2 | tr '\n' ' ')"
+adb shell am force-stop $PKG
+
 # --- 5. monkey: случайные нажатия по интерфейсу
 say ""; say "## Monkey"
 seed_prefs false
