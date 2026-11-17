@@ -8,6 +8,9 @@ import sys
 import tempfile
 import threading
 import time
+import unicodedata
+import uuid
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable
@@ -52,21 +55,89 @@ def timestamp(seconds: float) -> str:
     return f'{hours:02}:{minutes:02}:{secs:02},{ms:03}'
 
 
-def export(segments: list[Segment], folder: Path, stem: str, language: str) -> tuple[Path, Path]:
-    """Use a unique directory per job; publish each file atomically."""
+MAX_OUTPUT_PATH = 240
+
+
+def path_units(value) -> int:
+    return len(str(value).encode('utf-16-le')) // 2
+
+
+def safe_stem(value: str, limit: int = 64) -> str:
+    value = unicodedata.normalize('NFC', value)
+    value = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', value).strip(' .') or 'transcript'
+    if re.match(r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)', value, re.I):
+        value = '_' + value
+    result = ''
+    for char in value:
+        if path_units(result + char) > limit: break
+        result += char
+    return result.rstrip(' .') or 'text'[:limit]
+
+
+def prepare_output(parent: Path) -> int:
+    parent.mkdir(parents=True, exist_ok=True)
+    prefix_budget = min(32, MAX_OUTPUT_PATH - path_units(parent) - 34)
+    if prefix_budget < 1:
+        raise ValueError('Путь папки результата слишком длинный. Выбери более короткий путь, например D:\\Kotoba.')
+    try:
+        with tempfile.NamedTemporaryFile(dir=parent, prefix='.kotoba-check-', suffix='.tmp') as probe:
+            probe.write(b'Kotoba'); probe.flush(); os.fsync(probe.fileno())
+    except OSError as error:
+        raise RuntimeError(f'Не удалось записать файл в папку {parent}: {error}') from error
+    return prefix_budget
+
+
+def new_result_folder(parent: Path, stem: str, budget: int) -> Path:
+    for _ in range(10):
+        folder = parent / f'{safe_stem(stem, budget)}_{uuid.uuid4().hex[:8]}'
+        try:
+            folder.mkdir()
+            return folder
+        except FileExistsError: continue
+    raise RuntimeError('Не удалось создать уникальную папку результата.')
+
+
+def verify_exports(paths):
+    if not paths: raise RuntimeError('Список сохранённых файлов пуст.')
+    sizes = {}
+    for path in paths:
+        try:
+            text = path.read_text('utf-8-sig')
+            if not text.strip(): raise ValueError('файл пуст')
+            if path.suffix == '.srt' and not re.search(r'\d{2,}:\d{2}:\d{2},\d{3} --> ', text):
+                raise ValueError('в SRT отсутствуют таймкоды')
+            sizes[path] = path.stat().st_size
+        except (OSError, ValueError) as error:
+            raise RuntimeError(f'Не удалось проверить сохранённый файл {path}: {error}') from error
+    return sizes
+
+
+def export(segments: list[Segment], folder: Path, stem: str, language: str, log=None) -> tuple[Path, Path]:
+    """Write and read back each result before reporting successful export."""
     paths = []
+    budget = min(64, MAX_OUTPUT_PATH - path_units(folder) - 8)
+    if budget < 8: raise ValueError('Путь результата слишком длинный. Выбери более короткую папку.')
+    stem = safe_stem(stem, budget)
     texts = ('\n'.join(s.text for s in segments) + '\n',
              '\n\n'.join(f'{i}\n{timestamp(s.start)} --> {timestamp(max(s.end, s.start + .001))}\n{s.text}'
                          for i, s in enumerate(segments, 1)) + '\n')
     for ext, content in zip(('txt', 'srt'), texts):
         path = folder / f'{stem}.{language}.{ext}'
-        fd, temp = tempfile.mkstemp(dir=folder, suffix='.tmp')
+        temp = None
         try:
+            fd, temp = tempfile.mkstemp(dir=folder, suffix='.tmp')
             with os.fdopen(fd, 'w', encoding='utf-8-sig', newline='\n') as f:
-                f.write(content)
+                f.write(content); f.flush(); os.fsync(f.fileno())
             os.replace(temp, path)
+            if path.read_text('utf-8-sig') != content:
+                raise RuntimeError('содержимое после записи не совпало с результатом')
+            size = verify_exports([path])[path]
+            if log: log(f'Файл проверен: {path} ({size} байт)')
+        except Exception as error:
+            raise RuntimeError(f'Ошибка сохранения {path}: {error}') from error
         finally:
-            Path(temp).unlink(missing_ok=True)
+            if temp:
+                with suppress(OSError): Path(temp).unlink(missing_ok=True)
         paths.append(path)
     return tuple(paths)
 
@@ -187,18 +258,26 @@ def run_job(job: Job, cancel: threading.Event, log: Callable[[str], None],
     if job.translator not in ('none', 'offline', 'google', 'deepl'): raise ValueError('Неизвестный переводчик')
     if job.language != job.target and job.translator in ('google', 'deepl') and not job.api_key.strip():
         raise ValueError('Для онлайн-перевода нужен API-ключ выбранного сервиса.')
-    job.output.mkdir(parents=True, exist_ok=True)
-    folder = Path(tempfile.mkdtemp(prefix=f'{job.source.stem[:70]}_', dir=job.output))
+    job = replace(job, source=job.source.expanduser().resolve(), output=job.output.expanduser().resolve())
+    budget = prepare_output(job.output)
+    log(f'Папка сохранения проверена: {job.output}')
+    log('Этап 1/2: распознавание. Файлы появятся после получения текста.')
     original = recognizer(job, cancel, log)
     check_cancel(cancel)
     if not original: raise ValueError('Речь не найдена. Проверь аудиодорожку и исходный язык.')
-    paths = list(export(original, folder, job.source.stem, job.language))
+    folder = new_result_folder(job.output, job.source.stem, budget)
+    try:
+        paths = list(export(original, folder, job.source.stem, job.language, log))
+    except Exception:
+        with suppress(OSError): folder.rmdir()
+        raise
     log(f'Исходная расшифровка сохранена: {folder}')
     if job.language != job.target and job.translator != 'none':
         translator = None
         try:
             check_cancel(cancel)
             factory = translator_factory or (lambda j: OfflineTranslator(j, log) if j.translator == 'offline' else OnlineTranslator(j))
+            log('Этап 2/2: перевод. Исходные TXT/SRT уже сохранены.')
             translator = factory(job)
             translated = []
             for i, segment in enumerate(original, 1):
@@ -208,11 +287,12 @@ def run_job(job: Job, cancel: threading.Event, log: Callable[[str], None],
                 translated.append(replace(segment, text=text))
                 log(f'Перевод: {i} / {len(original)}')
             check_cancel(cancel)
-            paths.extend(export(translated, folder, job.source.stem, job.target))
+            paths.extend(export(translated, folder, job.source.stem, job.target, log))
         except Exception:
             log(f'Перевод не завершён. Исходные TXT/SRT доступны в {folder}')
             raise
         finally:
             if translator: translator.close()
-    log('Готово. ' + '\n'.join(str(p) for p in paths))
+    verify_exports(paths)
+    log(f'Готово: проверено {len(paths)} файлов. ' + '\n'.join(str(p) for p in paths))
     return paths

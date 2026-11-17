@@ -1,7 +1,7 @@
 name: Build Kotoba Windows release
 on:
   push:
-    branches: [kotoba-release-v0.1.0]
+    branches: [kotoba-release-v0.1.1]
 permissions:
   contents: write
 jobs:
@@ -55,12 +55,44 @@ jobs:
           $reportObject = Get-Content "$asrOutput/report.json" -Raw | ConvertFrom-Json
           $transcript = Get-Content $reportObject.files[0] -Raw
           if ($transcript -notmatch 'country') { throw 'Unexpected transcription output' }
+      - name: Verify hotfix with the existing 0.1.0 runtime
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest 'https://github.com/reiqwazaaa/VADapk/releases/download/kotoba-v0.1.0/Kotoba-Windows.zip' -OutFile 'baseline.zip'
+          $digest = (Get-FileHash 'baseline.zip' -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($digest -ne 'c69af3aa9bb951b84091b1f0391c5014fbdc05dbacf13410d85a1c81432f13bd') { throw 'Baseline archive checksum mismatch' }
+          Expand-Archive -LiteralPath 'baseline.zip' -DestinationPath 'baseline'
+          Remove-Item 'baseline.zip'
+          Copy-Item 'dist/Kotoba/Kotoba.exe' 'baseline/Kotoba-Windows/Kotoba.exe' -Force
+          $exe = (Resolve-Path 'baseline/Kotoba-Windows/Kotoba.exe').Path
+          $report = Join-Path $PWD 'hotfix-self-test.json'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--self-test', $report) -Wait -PassThru
+          Get-Content $report
+          if ($process.ExitCode -ne 0) { throw 'Hotfix with old runtime failed' }
+          $uiReport = Join-Path $PWD 'hotfix-ui.json'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-ui', $uiReport) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Hotfix UI failed' }
+          $longName = 'audio_' + ('a' * 120) + '_日本語.flac'
+          Copy-Item 'jfk.flac' $longName
+          $audio = (Resolve-Path $longName).Path
+          $asrOutput = Join-Path $PWD 'hotfix-long-name-output'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-asr', $audio, $asrOutput) -Wait -PassThru
+          $asrReport = Get-Content "$asrOutput/report.json" -Raw | ConvertFrom-Json
+          Get-Content "$asrOutput/report.json"
+          if ($process.ExitCode -ne 0) { throw 'Hotfix transcription/export failed' }
+          foreach ($path in $asrReport.files) {
+            if ($path.Length -gt 240) { throw 'Export path exceeds Windows budget' }
+            if ((Get-Item $path).Length -le 3) { throw 'Empty export' }
+          }
+          $text = Get-Content $asrReport.files[0] -Raw
+          if ($text -notmatch 'country') { throw 'Hotfix transcript mismatch' }
+          Remove-Item 'baseline' -Recurse -Force
       - name: Package verified release
         run: python package_windows_release.py
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload kotoba-v0.1.0 release-assets/Kotoba-Windows.zip release-assets/Kotoba.zip release-assets/SHA256SUMS.txt --repo reiqwazaaa/VADapk --clobber
+        run: gh release upload kotoba-v0.1.1 release-assets/Kotoba-Windows.zip release-assets/Kotoba.zip release-assets/Kotoba-hotfix-0.1.1.zip release-assets/SHA256SUMS.txt --repo reiqwazaaa/VADapk --clobber
       - name: Save verification reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -70,4 +102,7 @@ jobs:
             desktop/kotoba/frozen-self-test.json
             desktop/kotoba/frozen-ui.json
             desktop/kotoba/asr-check/report.json
+            desktop/kotoba/hotfix-self-test.json
+            desktop/kotoba/hotfix-ui.json
+            desktop/kotoba/hotfix-long-name-output/report.json
             desktop/kotoba/build/Kotoba/warn-Kotoba.txt

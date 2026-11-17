@@ -6,9 +6,14 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+from datetime import datetime
+from uuid import uuid4
+from contextlib import suppress
 from pathlib import Path
 from tkinter import ttk, filedialog, messagebox
-from .core import Job, LANGUAGES, MODELS, Cancelled, run_job
+from .core import Job, LANGUAGES, MODELS, Cancelled, run_job, verify_exports
+from .diagnostics import TaskLog
+from . import __version__
 
 STATE = Path(os.getenv('LOCALAPPDATA', Path.home() / '.local' / 'share')) / 'Kotoba'
 SETTINGS = STATE / 'settings.json'
@@ -18,7 +23,7 @@ TRANSLATORS = {'Офлайн · NLLB-200 600M': 'offline', 'Google Cloud Transla
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('Kotoba • аудио → текст → перевод')
+        self.title(f'Kotoba {__version__} • аудио → текст → перевод')
         width = min(960, max(760, self.winfo_screenwidth() - 60))
         height = min(900, max(600, self.winfo_screenheight() - 100))
         self.geometry(f'{width}x{height}')
@@ -111,6 +116,7 @@ class App(tk.Tk):
         self.stop_btn = ttk.Button(actions, text='Отменить', command=self.stop, state='disabled')
         self.stop_btn.pack(side='left', padx=10)
         ttk.Button(actions, text='Открыть результат', command=self.open_output).pack(side='right')
+        ttk.Button(actions, text='Журнал', command=self.open_log).pack(side='right', padx=6)
         self.progress = ttk.Progressbar(outer, mode='indeterminate')
         self.progress.pack(fill='x', pady=(0, 8))
         self.logbox = tk.Text(outer, height=7, bg='#0b1018', fg='#b8c8e6', relief='flat', wrap='word',
@@ -195,9 +201,15 @@ class App(tk.Tk):
             job = Job(Path(self.source.get()), Path(self.output.get()), LANGUAGES[self.language.get()], LANGUAGES[self.target.get()],
                       self.model.get(), self.device.get(), tr, self.key.get().strip(), self.free.get(), Path(self.models_dir.get()), self.offline.get())
             self.save_settings()
+            log_path = STATE / 'logs' / f'job_{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:8]}.log'
+            task_log = TaskLog(log_path, lambda line: self.events.put(('log', line)), [job.api_key])
         except Exception as e:
             messagebox.showerror('Проверь настройки', str(e)); return
         self.last_output = job.output
+        self.last_log = log_path
+        self.logbox.configure(state='normal')
+        self.logbox.delete('1.0', 'end')
+        self.logbox.configure(state='disabled')
         self.cancel.clear()
         self.start_btn.configure(state='disabled')
         self.stop_btn.configure(state='normal')
@@ -206,13 +218,22 @@ class App(tk.Tk):
         self.append_log('Новая задача: ' + job.source.name)
         def work():
             try:
-                paths = run_job(job, self.cancel, lambda s: self.events.put(('log', s)))
-                self.events.put(('done', paths[0].parent))
-            except Cancelled: self.events.put(('cancel', 'Отменено. Уже сохранённая расшифровка остаётся в папке результата.'))
-            except Exception as e:
-                # Never surface requests exception URLs: they may contain a Google API key.
-                message = str(e).replace(job.api_key, '[ключ скрыт]') if job.api_key else str(e)
-                self.events.put(('error', message + '\nЕсли ошибка CUDA: установи GPU-компоненты через install-gpu.bat, освободи VRAM или выбери CPU.'))
+                task_log(f'Kotoba {__version__}; источник: {job.source.resolve()}')
+                task_log(f'Языки: {job.language} → {job.target}; Whisper: {job.model}; устройство: {job.device}; перевод: {job.translator}')
+                task_log(f'Журнал: {log_path}')
+                paths = run_job(job, self.cancel, task_log)
+                sizes = verify_exports(paths)
+                task_log(f'УСПЕХ: на диске проверено {len(paths)} файлов, {sum(sizes.values())} байт.')
+                self.events.put(('done', (paths[0].parent, len(paths))))
+            except Cancelled:
+                with suppress(OSError): task_log('ОТМЕНЕНО. Уже сохранённая расшифровка остаётся в папке результата.')
+                self.events.put(('cancel', 'Отменено. Уже сохранённая расшифровка остаётся в папке результата.'))
+            except Exception as error:
+                with suppress(OSError): task_log.exception()
+                message = str(error).replace(job.api_key, '[ключ скрыт]') if job.api_key else str(error)
+                self.events.put(('error', message + f'\n\nПолный журнал: {log_path}'))
+            finally:
+                with suppress(OSError): task_log.close()
         self.worker = threading.Thread(target=work, daemon=True)
         self.worker.start()
     def stop(self):
@@ -231,13 +252,19 @@ class App(tk.Tk):
                     widget.configure(state='readonly' if isinstance(widget, ttk.Combobox) else 'normal')
                 self.update_translator()
                 if kind == 'done':
-                    self.last_output = data
-                    self.append_log('✓ Результат сохранён: ' + str(data))
+                    self.last_output, count = data
+                    self.append_log(f'✓ На диске проверено {count} файлов. Папка: {self.last_output}')
                 else:
                     self.append_log(str(data))
                     if kind == 'error': messagebox.showerror('Задача не завершена', str(data))
         except queue.Empty: pass
         self.after(120, self.poll)
+    def open_log(self):
+        path = getattr(self, 'last_log', None)
+        if path is None or not path.is_file():
+            messagebox.showinfo('Журнал', 'Журнал появится после запуска задачи.'); return
+        if sys.platform == 'win32': subprocess.Popen(['notepad.exe', str(path)])
+        else: subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', str(path)])
     def open_output(self):
         path = getattr(self, 'last_output', Path(self.output.get()))
         if not path.is_dir(): messagebox.showinfo('Папка результата', 'Папка появится после запуска задачи.'); return
