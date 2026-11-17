@@ -1,0 +1,6 @@
+en -> ru: Сегодня мы тестируем аудиотранскрипцию.
+en -> ja: こんにちは 今日はオーディオトランスクリプションをテストします
+ru -> en: We're testing speech recognition today.
+ru -> ja: こんにちは 今日は話の認識をテストします
+ja -> en: Hello. I'm going to test your voice recognition today.
+ja -> ru: Здравствуйте. Сегодня мы проверим голосовое распознавание.

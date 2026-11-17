@@ -1,0 +1,73 @@
+name: Build Kotoba Windows release
+on:
+  push:
+    branches: [kotoba-release-v0.1.0]
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop/kotoba
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install CPU translation runtime
+        run: python -m pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cpu
+      - name: Install app and GPU dependencies
+        run: python -m pip install --no-cache-dir -r requirements.txt pyinstaller==6.16.0 nvidia-cublas-cu12==12.9.1.4 nvidia-cudnn-cu12==9.10.2.21 nvidia-cuda-runtime-cu12==12.9.79
+      - name: Run application tests
+        run: |
+          python -m unittest discover -s tests -v
+          if ($LASTEXITCODE -ne 0) { throw 'Application tests failed' }
+      - name: Build portable executable
+        run: |
+          python -m PyInstaller --noconfirm --clean Kotoba.spec
+          if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }
+          python bundle_gpu.py dist/Kotoba/_internal
+          if ($LASTEXITCODE -ne 0) { throw 'GPU bundling failed' }
+          $runtimeNames = @('concrt140.dll','msvcp140.dll','msvcp140_1.dll','msvcp140_2.dll','msvcp140_atomic_wait.dll','msvcp140_codecvt_ids.dll','vcomp140.dll','vcruntime140.dll','vcruntime140_1.dll','vcruntime140_threads.dll')
+          foreach ($name in $runtimeNames) {
+            $source = Join-Path "$env:WINDIR/System32" $name
+            if (Test-Path $source) { Copy-Item $source "dist/Kotoba/_internal/$name" -Force }
+          }
+      - name: Verify frozen app and transcription on Windows
+        run: |
+          $exe = (Resolve-Path 'dist/Kotoba/Kotoba.exe').Path
+          $report = Join-Path $PWD 'frozen-self-test.json'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--self-test', $report) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { Get-Content $report; throw 'Frozen engines test failed' }
+          Get-Content $report
+          $uiReport = Join-Path $PWD 'frozen-ui.json'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-ui', $uiReport) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Frozen UI test failed' }
+          Get-Content $uiReport
+          Invoke-WebRequest 'https://raw.githubusercontent.com/openai/whisper/main/tests/jfk.flac' -OutFile 'jfk.flac'
+          $audio = (Resolve-Path 'jfk.flac').Path
+          $asrOutput = Join-Path $PWD 'asr-check'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-asr', $audio, $asrOutput) -Wait -PassThru
+          Get-Content "$asrOutput/report.json"
+          if ($process.ExitCode -ne 0) { throw 'Frozen audio transcription failed' }
+          $reportObject = Get-Content "$asrOutput/report.json" -Raw | ConvertFrom-Json
+          $transcript = Get-Content $reportObject.files[0] -Raw
+          if ($transcript -notmatch 'country') { throw 'Unexpected transcription output' }
+      - name: Package verified release
+        run: python package_windows_release.py
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload kotoba-v0.1.0 release-assets/Kotoba-Windows.zip release-assets/Kotoba.zip release-assets/SHA256SUMS.txt --repo reiqwazaaa/VADapk --clobber
+      - name: Save verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kotoba-Windows-verification
+          path: |
+            desktop/kotoba/frozen-self-test.json
+            desktop/kotoba/frozen-ui.json
+            desktop/kotoba/asr-check/report.json
+            desktop/kotoba/build/Kotoba/warn-Kotoba.txt

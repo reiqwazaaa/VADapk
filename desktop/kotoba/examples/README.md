@@ -1,0 +1,1 @@
+Пример TXT/SRT из реальной проверки на CPU: Whisper tiny, 11 секунд аудио JFK из тестовых данных OpenAI Whisper (`https://raw.githubusercontent.com/openai/whisper/main/tests/jfk.flac`). Аудиофайл в архив не включён. Такой же текст получен из MP4 с этой аудиодорожкой, со строго локальной загрузкой Whisper из кэша.
