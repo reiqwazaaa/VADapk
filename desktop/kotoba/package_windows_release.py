@@ -8,7 +8,7 @@ shutil.copy2(root/'frozen-self-test.json',app/'self-test.json')
 shutil.copy2(root/'THIRD_PARTY.md',app/'THIRD_PARTY.md')
 (app/'НАЧАТЬ ЗДЕСЬ.txt').write_text('Kotoba — Windows x64\n\nРаспакуй всю папку и запусти Kotoba.exe. Папка _internal должна оставаться рядом.\nPython и CUDA-библиотеки включены. Нужен актуальный драйвер NVIDIA.\nДля RTX 3070 начни с large-v3-turbo и устройства auto. Модели загружаются при первой задаче.\nВыбери видео/аудио, языки и папку результата. Нажми «Распознать и сохранить».\nЛокальный NLLB использует CPU и лицензию CC-BY-NC 4.0; Google/DeepL требуют API-ключа.\nПодробнее о проверке: BUILD-INFO.md.\n','utf-8-sig')
 sha=hashlib.sha256((app/'Kotoba.exe').read_bytes()).hexdigest()
-(app/'BUILD-INFO.md').write_text(f'# Kotoba 0.1.1 — Windows x64\n\nСобрано на GitHub Actions windows-latest, Python {sys.version.split()[0]}, PyInstaller 6.16.0.\n\nПроверено на Windows: 16 тестов приложения; окно EXE; загрузка движков; генерация малой конфигурацией M2M100 (архитектура NLLB); реальное распознавание записи JFK через Whisper tiny/int8 с VAD и сохранением TXT/SRT.\n\nGPU на раннере отсутствует: выполнение CUDA и скорость RTX 3070 не проверялись. CUDA 12.9.79, cuBLAS 12.9.1.4, cuDNN 9.10.2.21 и Visual C++ runtime включены.\n\nПолные модели Whisper/NLLB скачиваются отдельно при первой задаче. Онлайн Google/DeepL проверены контрактными тестами без платных запросов.\n\nSHA256 Kotoba.exe: `{sha}`\n','utf-8')
+(app/'BUILD-INFO.md').write_text(f'# Kotoba 0.1.2 — Windows x64\n\nСобрано на GitHub Actions windows-latest, Python {sys.version.split()[0]}, PyInstaller 6.16.0.\n\nПроверено на Windows: 25 тестов приложения (включая принудительный обрыв worker, сохранение промежуточных TXT/SRT и сохранение работоспособности окна); окно EXE; загрузка движков; генерация малой конфигурацией M2M100 (архитектура NLLB); реальное распознавание записи JFK через Whisper tiny/int8 с VAD и сохранением TXT/SRT.\n\nGPU на раннере отсутствует: выполнение CUDA и скорость RTX 3070 не проверялись. CUDA 12.9.79, cuBLAS 12.9.1.4, cuDNN 9.10.2.21 и Visual C++ runtime включены.\n\nПолные модели Whisper/NLLB скачиваются отдельно при первой задаче. Онлайн Google/DeepL проверены контрактными тестами без платных запросов.\n\nSHA256 Kotoba.exe: `{sha}`\n','utf-8')
 with ZipFile(output/'Kotoba-Windows.zip','w',ZIP_DEFLATED,compresslevel=6) as z:
  for p in sorted(app.rglob('*')):
   if p.is_file() and '__pycache__' not in p.parts:z.write(p,Path('Kotoba-Windows')/p.relative_to(app))
@@ -17,12 +17,12 @@ with ZipFile(output/'Kotoba.zip','w',ZIP_DEFLATED) as z:
  for name in tracked:
   p=root/name
   if p.is_file():z.write(p,Path('Kotoba')/name)
-hotfix_text = 'Kotoba 0.1.1 — исправление сохранения\n\nЗакрой Kotoba 0.1.0. Распакуй Kotoba.exe из этого ZIP поверх старого Kotoba.exe в той же папке. Папку _internal оставь от версии 0.1.0.\n\nЭтот комплект проверен на Windows с библиотеками опубликованной версии 0.1.0: окно, движки, генерация перевода и распознавание с экспортом при длинном имени файла.\n\nНовая версия ограничивает длину путей Windows, читает сохранённые файлы перед сообщением об успехе и ведёт журнал задачи. Кнопка «Журнал» открывает подробности сбоя.\n'
-with ZipFile(output/'Kotoba-hotfix-0.1.1.zip','w',ZIP_DEFLATED) as z:
+hotfix_text = 'Kotoba 0.1.2 — исправление сохранения\n\nЗакрой Kotoba 0.1.0 или 0.1.1. Распакуй Kotoba.exe из этого ZIP поверх старого Kotoba.exe в той же папке. Папку _internal оставь от версии 0.1.0 или 0.1.1.\n\nЭтот комплект проверен на Windows с библиотеками опубликованных версий 0.1.0 и 0.1.1: окно, движки, генерация перевода и распознавание с экспортом при длинном имени файла.\n\nWhisper работает в отдельном процессе. TXT/SRT сохраняются с первой фразы и обновляются во время распознавания. При аварии worker окно остаётся открытым, а полученный текст сохраняется. Завершённая работа подтверждается протоколом; выход native-кода записывается в журнал. Кнопка «Журнал» открывает подробности сбоя.\n'
+with ZipFile(output/'Kotoba-hotfix-0.1.2.zip','w',ZIP_DEFLATED) as z:
  z.write(app/'Kotoba.exe','Kotoba.exe')
  z.writestr('НАЧАТЬ ЗДЕСЬ.txt',hotfix_text.encode('utf-8-sig'))
 checks=[]
-for name in ['Kotoba-Windows.zip','Kotoba.zip','Kotoba-hotfix-0.1.1.zip']:
+for name in ['Kotoba-Windows.zip','Kotoba.zip','Kotoba-hotfix-0.1.2.zip']:
  with ZipFile(output/name) as z:assert z.testzip() is None
  h=hashlib.sha256()
  with (output/name).open('rb') as f:

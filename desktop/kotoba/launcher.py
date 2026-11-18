@@ -6,6 +6,10 @@ from kotoba.app import App
 
 
 def main():
+    if len(sys.argv) == 5 and sys.argv[1] == '--asr-worker':
+        from kotoba.asr_worker import main as asr_worker
+        asr_worker(*sys.argv[2:5])
+        return 1
     if len(sys.argv) > 2 and sys.argv[1] == '--self-test':
         import importlib
         result = {}

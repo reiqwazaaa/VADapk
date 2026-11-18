@@ -158,33 +158,9 @@ def cuda_paths():
 _DLL_HANDLES = cuda_paths()
 
 
-def recognize(job, cancel, log):
-    from faster_whisper import WhisperModel
-    import ctranslate2
-    device = job.device
-    if device == 'auto': device = 'cuda' if ctranslate2.get_cuda_device_count() else 'cpu'
-    compute = 'int8_float16' if device == 'cuda' else 'int8'
-    log(f'Загрузка Whisper {job.model} • {device.upper()} • {compute}. Первый запуск скачивает модель.')
-    check_cancel(cancel)
-    model = WhisperModel(job.model, device=device, compute_type=compute,
-                         download_root=str(job.models_dir / 'whisper'),
-                         local_files_only=job.offline_only, cpu_threads=4)
-    try:
-        check_cancel(cancel)
-        chunks, info = model.transcribe(str(job.source), language=job.language,
-                                        task='transcribe', vad_filter=True, beam_size=5,
-                                        condition_on_previous_text=False)
-        result = []
-        for chunk in chunks:
-            check_cancel(cancel)
-            text = chunk.text.strip()
-            if text: result.append(Segment(chunk.start, chunk.end, text))
-            log(f'Распознано {chunk.end:.0f} / {info.duration:.0f} сек.')
-        check_cancel(cancel)
-        return result
-    finally:
-        del model
-        gc.collect()
+def recognize(job, cancel, log, on_segment=None):
+    from .asr_process import recognize as recognize_isolated
+    return recognize_isolated(job, cancel, log, on_segment)
 
 
 class OnlineTranslator:
@@ -251,8 +227,39 @@ class OfflineTranslator:
         return ' '.join(out)
 
 
+class TranscriptCheckpoint:
+    def __init__(self, job, budget, log):
+        self.job, self.budget, self.log = job, budget, log
+        self.segments = []
+        self.folder = None
+        self.paths = []
+        self.saved_count = 0
+        self.last_save = 0.0
+        self.failure = None
+
+    def add(self, segment):
+        self.segments.append(segment)
+        if len(self.segments) == 1 or len(self.segments) - self.saved_count >= 25 or time.monotonic() - self.last_save >= 2:
+            self.flush()
+
+    def flush(self):
+        if not self.segments or self.saved_count == len(self.segments): return
+        if self.folder is None:
+            self.folder = new_result_folder(self.job.output, self.job.source.stem, self.budget)
+            self.log(f'Папка результата: {self.folder}')
+        try:
+            self.paths = list(export(self.segments, self.folder, self.job.source.stem, self.job.language, self.log))
+        except Exception as error:
+            self.failure = error
+            with suppress(OSError): self.folder.rmdir()
+            raise
+        self.saved_count = len(self.segments)
+        self.last_save = time.monotonic()
+        self.log(f'Промежуточно сохранено и проверено: {self.saved_count} фраз.')
+
+
 def run_job(job: Job, cancel: threading.Event, log: Callable[[str], None],
-            recognizer=recognize, translator_factory=None):
+            recognizer=None, translator_factory=None):
     if not job.source.is_file(): raise ValueError('Выбери существующий видео- или аудиофайл.')
     if job.language not in NLLB or job.target not in NLLB: raise ValueError('Неизвестный язык')
     if job.translator not in ('none', 'offline', 'google', 'deepl'): raise ValueError('Неизвестный переводчик')
@@ -261,16 +268,30 @@ def run_job(job: Job, cancel: threading.Event, log: Callable[[str], None],
     job = replace(job, source=job.source.expanduser().resolve(), output=job.output.expanduser().resolve())
     budget = prepare_output(job.output)
     log(f'Папка сохранения проверена: {job.output}')
-    log('Этап 1/2: распознавание. Файлы появятся после получения текста.')
-    original = recognizer(job, cancel, log)
-    check_cancel(cancel)
-    if not original: raise ValueError('Речь не найдена. Проверь аудиодорожку и исходный язык.')
-    folder = new_result_folder(job.output, job.source.stem, budget)
+    log('Этап 1/2: распознавание. TXT/SRT обновляются по мере получения фраз.')
+    checkpoint = TranscriptCheckpoint(job, budget, log)
     try:
-        paths = list(export(original, folder, job.source.stem, job.language, log))
-    except Exception:
-        with suppress(OSError): folder.rmdir()
+        if recognizer is None:
+            original = recognize(job, cancel, log, checkpoint.add)
+        else:
+            original = recognizer(job, cancel, log)
+            checkpoint.segments = list(original)
+        checkpoint.flush()
+        check_cancel(cancel)
+    except BaseException as error:
+        # Flush delivered segments even when the native worker dies, hangs or is cancelled.
+        if checkpoint.failure is None:
+            try: checkpoint.flush()
+            except Exception as save_error:
+                log(f'Не удалось обновить промежуточные файлы: {save_error}')
+                raise RuntimeError(f'{error}\nОшибка сохранения: {save_error}') from error
+        if checkpoint.paths:
+            log(f'Распознавание прервано. Промежуточные TXT/SRT сохранены: {checkpoint.folder}')
+            if not isinstance(error, Cancelled):
+                raise RuntimeError(f'{error}\nПолученная расшифровка: {checkpoint.folder}') from error
         raise
+    if not original: raise ValueError('Речь не найдена. Проверь аудиодорожку и исходный язык.')
+    folder, paths = checkpoint.folder, list(checkpoint.paths)
     log(f'Исходная расшифровка сохранена: {folder}')
     if job.language != job.target and job.translator != 'none':
         translator = None
