@@ -173,7 +173,7 @@ class LiveTranslationControllerTests(unittest.TestCase):
                 def close(self,log):pass
             folder=run_live(LiveConfig(root/'out',root/'models',translator='offline'),threading.Event(),logs.append,lambda e,d:events.append((e,d)),Fake)
             self.assertIn('Original saved',(folder/'live.ja.txt').read_text('utf-8-sig'))
-            metadata=json.loads((folder/'session.json').read_text())
+            metadata=json.loads((folder/'session.json').read_text('utf-8'))
             self.assertTrue(metadata['translation_incomplete'])
             self.assertEqual(metadata['status'],'stopped')
             warnings=[data for event,data in events if event=='translation_unavailable']
