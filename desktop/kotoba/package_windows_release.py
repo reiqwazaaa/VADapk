@@ -45,9 +45,11 @@ with ZipFile(output/'Kotoba-Windows.zip','w',ZIP_DEFLATED,compresslevel=6) as z:
 with ZipFile(output/'Kotoba-update-0.2.0.zip','w',ZIP_DEFLATED) as z:
  z.write(app/'Kotoba.exe','Kotoba.exe');z.writestr('НАЧАТЬ ЗДЕСЬ.txt',help_text.encode('utf-8-sig'))
  for folder in (app/'_internal').iterdir():
-  if 'pyaudiowpatch' in folder.name.lower():
-   for p in sorted(folder.rglob('*')):
-    if p.is_file():z.write(p,p.relative_to(app))
+  if 'pyaudiowpatch' in folder.name.lower() or 'portaudiowpatch' in folder.name.lower():
+   if folder.is_file():z.write(folder,folder.relative_to(app))
+   else:
+    for p in sorted(folder.rglob('*')):
+     if p.is_file():z.write(p,p.relative_to(app))
 tracked=subprocess.check_output(['git','ls-files','--','.'],text=True).splitlines()
 with ZipFile(output/'Kotoba.zip','w',ZIP_DEFLATED) as z:
  for name in tracked:

@@ -83,7 +83,7 @@ jobs:
           Expand-Archive -LiteralPath 'baseline.zip' -DestinationPath 'baseline'
           Remove-Item 'baseline.zip'
           Copy-Item 'dist/Kotoba/Kotoba.exe' 'baseline/Kotoba-Windows/Kotoba.exe' -Force
-          Get-ChildItem 'dist/Kotoba/_internal' -Directory | Where-Object { $_.Name -like '*pyaudiowpatch*' } | ForEach-Object {
+          Get-ChildItem 'dist/Kotoba/_internal' | Where-Object { $_.Name -like '*pyaudiowpatch*' -or $_.Name -like '*portaudiowpatch*' } | ForEach-Object {
             Copy-Item $_.FullName 'baseline/Kotoba-Windows/_internal' -Recurse -Force
           }
           $exe = (Resolve-Path 'baseline/Kotoba-Windows/Kotoba.exe').Path
