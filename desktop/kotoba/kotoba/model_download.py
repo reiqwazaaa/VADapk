@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import socket
+import sys
 import time
 
 NLLB_REPO = 'facebook/nllb-200-distilled-600M'
@@ -42,6 +43,10 @@ def complete_snapshot(folder):
 def prepare_nllb(job, log):
     from huggingface_hub import constants, snapshot_download
     from huggingface_hub.errors import LocalEntryNotFoundError
+    if sys.stderr is None:
+        # Windowed PyInstaller apps have no console stream for Hub's progress bar.
+        from huggingface_hub.utils import disable_progress_bars
+        disable_progress_bars()
     cache = str(job.models_dir / 'translation')
     try:
         cached = snapshot_download(NLLB_REPO, cache_dir=cache, local_files_only=True)
