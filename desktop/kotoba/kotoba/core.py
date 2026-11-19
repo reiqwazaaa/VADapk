@@ -164,7 +164,8 @@ def recognize(job, cancel, log, on_segment=None):
 
 
 class OnlineTranslator:
-    def __init__(self, job):
+    def __init__(self, job, timeout=(15, 90)):
+        self.timeout = timeout
         import requests
         self.job = job
         self.session = requests.Session()
@@ -174,13 +175,13 @@ class OnlineTranslator:
         if j.translator == 'google':
             response = self.session.post('https://translation.googleapis.com/language/translate/v2',
                 params={'key': j.api_key}, json={'q': text, 'source': j.language, 'target': j.target,
-                                                'format': 'text'}, timeout=(15, 90))
+                                                'format': 'text'}, timeout=self.timeout)
         else:
             host = 'api-free.deepl.com' if j.deepl_free else 'api.deepl.com'
             response = self.session.post(f'https://{host}/v2/translate',
                 headers={'Authorization': f'DeepL-Auth-Key {j.api_key}'},
                 json={'text': [text], 'source_lang': j.language.upper(),
-                      'target_lang': 'EN-US' if j.target == 'en' else j.target.upper()}, timeout=(15, 90))
+                      'target_lang': 'EN-US' if j.target == 'en' else j.target.upper()}, timeout=self.timeout)
         if response.status_code != 200:
             raise RuntimeError(f'{j.translator}: HTTP {response.status_code}. Проверь ключ, тариф, квоту и сеть.')
         data = response.json()

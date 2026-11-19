@@ -6,6 +6,9 @@ from kotoba.app import App
 
 
 def main():
+    if len(sys.argv)>1 and sys.argv[1] in ('--live-worker','--live-devices','--smoke-live'):
+        from kotoba.live_cli import main as live_main
+        return live_main(sys.argv[1:])
     if len(sys.argv) == 5 and sys.argv[1] == '--asr-worker':
         from kotoba.asr_worker import main as asr_worker
         asr_worker(*sys.argv[2:5])
@@ -13,7 +16,7 @@ def main():
     if len(sys.argv) > 2 and sys.argv[1] == '--self-test':
         import importlib
         result = {}
-        for name in ('faster_whisper', 'ctranslate2', 'torch', 'transformers', 'sentencepiece', 'requests', 'av', 'onnxruntime',
+        for name in ('faster_whisper', 'ctranslate2', 'torch', 'transformers', 'sentencepiece', 'requests', 'av', 'onnxruntime', 'pyaudiowpatch',
                      'transformers.models.m2m_100.modeling_m2m_100', 'transformers.models.nllb.tokenization_nllb_fast'):
             try:
                 module = importlib.import_module(name)
@@ -52,6 +55,18 @@ def main():
             import traceback
             result = {'ok': False, 'traceback': traceback.format_exc(), 'log': logs}
         (folder / 'report.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), 'utf-8')
+        return 0 if result['ok'] else 1
+    if len(sys.argv)>2 and sys.argv[1]=='--smoke-live-ui':
+        from unittest.mock import patch
+        from kotoba.live_ui import LiveWindow
+        from kotoba.live_session import LiveConfig
+        app=App()
+        with patch('kotoba.live_ui.list_devices', return_value=[{'id':1,'kind':'system','name':'Test loopback'}]):
+            win=LiveWindow(app,LiveConfig(Path(sys.argv[2]).parent,Path('models')),Path(sys.argv[2]).parent)
+            app.update();win.show_overlay();app.update()
+            result={'ok':win.winfo_exists() and win.overlay.winfo_exists(),'title':win.title()}
+            win.destroy();app.destroy()
+        Path(sys.argv[2]).write_text(json.dumps(result),'utf-8')
         return 0 if result['ok'] else 1
     if len(sys.argv) > 2 and sys.argv[1] == '--smoke-ui':
         app = App()

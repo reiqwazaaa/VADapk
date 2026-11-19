@@ -1,7 +1,7 @@
 name: Build Kotoba Windows release
 on:
   push:
-    branches: [kotoba-release-v0.1.2]
+    branches: [kotoba-release-v0.2.0]
 permissions:
   contents: write
 jobs:
@@ -55,49 +55,58 @@ jobs:
           $reportObject = Get-Content "$asrOutput/report.json" -Raw | ConvertFrom-Json
           $transcript = Get-Content $reportObject.files[0] -Raw
           if ($transcript -notmatch 'country') { throw 'Unexpected transcription output' }
-      - name: Verify hotfix with 0.1.0 and 0.1.1 runtimes
+      - name: Verify live UI and audio-file stream
+        run: |
+          $exe = (Resolve-Path 'dist/Kotoba/Kotoba.exe').Path
+          $report = Join-Path $PWD 'live-ui.json'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-live-ui', $report) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Live overlay/UI failed' }
+          Get-Content $report
+          $deviceReport = Join-Path $PWD 'live-devices.json'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--live-devices', $deviceReport) -Wait -PassThru
+          if (-not (Test-Path $deviceReport)) { throw 'Audio device probe crashed' }
+          Get-Content $deviceReport
+          $audio = (Resolve-Path 'jfk.flac').Path
+          $liveOutput = Join-Path $PWD 'live-check'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-live', $audio, $liveOutput) -Wait -PassThru
+          Get-Content "$liveOutput/live-report.json"
+          if ($process.ExitCode -ne 0) { throw 'Frozen live replay failed' }
+          $r = Get-Content "$liveOutput/live-report.json" -Raw | ConvertFrom-Json
+          if ((Get-Content "$($r.folder)/live.en.txt" -Raw) -notmatch 'country') { throw 'Live transcript mismatch' }
+          $commits = @($r.events | Where-Object { $_.event -eq 'commit' })
+          if ($commits.Count -lt 1) { throw 'No live commits' }
+      - name: Verify update on 0.1.2 runtime
         run: |
           $ProgressPreference = 'SilentlyContinue'
-          $baselines = @(
-            @{ tag = 'kotoba-v0.1.0'; sha = 'c69af3aa9bb951b84091b1f0391c5014fbdc05dbacf13410d85a1c81432f13bd' },
-            @{ tag = 'kotoba-v0.1.1'; sha = 'c73a0da0468b76eb312c24e9abb2241399098785b47d7a2ddd3d9ad0b28d34f9' }
-          )
-          foreach ($base in $baselines) {
-            Invoke-WebRequest "https://github.com/reiqwazaaa/VADapk/releases/download/$($base.tag)/Kotoba-Windows.zip" -OutFile 'baseline.zip'
-            $digest = (Get-FileHash 'baseline.zip' -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($digest -ne $base.sha) { throw 'Baseline archive checksum mismatch' }
-            Expand-Archive -LiteralPath 'baseline.zip' -DestinationPath 'baseline'
-            Remove-Item 'baseline.zip'
-            Copy-Item 'dist/Kotoba/Kotoba.exe' 'baseline/Kotoba-Windows/Kotoba.exe' -Force
-            $exe = (Resolve-Path 'baseline/Kotoba-Windows/Kotoba.exe').Path
-            $report = Join-Path $PWD "hotfix-self-test-$($base.tag).json"
-            $process = Start-Process -FilePath $exe -ArgumentList @('--self-test', $report) -Wait -PassThru
-            Get-Content $report
-            if ($process.ExitCode -ne 0) { throw "Hotfix engines failed: $($base.tag)" }
-            $uiReport = Join-Path $PWD "hotfix-ui-$($base.tag).json"
-            $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-ui', $uiReport) -Wait -PassThru
-            if ($process.ExitCode -ne 0) { throw 'Hotfix UI failed' }
-            $longName = 'audio_' + ('a' * 120) + '_日本語.flac'
-            Copy-Item 'jfk.flac' $longName -Force
-            $audio = (Resolve-Path $longName).Path
-            $asrOutput = Join-Path $PWD 'hotfix-long-name-output'
-            $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-asr', $audio, $asrOutput) -Wait -PassThru
-            $asrReport = Get-Content "$asrOutput/report.json" -Raw | ConvertFrom-Json
-            Get-Content "$asrOutput/report.json"
-            if ($process.ExitCode -ne 0) { throw "Hotfix isolated ASR failed: $($base.tag)" }
-            foreach ($path in $asrReport.files) {
-              if ($path.Length -gt 240) { throw 'Export path exceeds Windows budget' }
-              if ((Get-Item $path).Length -le 3) { throw 'Empty export' }
-            }
-            if ((Get-Content $asrReport.files[0] -Raw) -notmatch 'country') { throw 'Hotfix transcript mismatch' }
-            Remove-Item 'baseline' -Recurse -Force
+          Invoke-WebRequest 'https://github.com/reiqwazaaa/VADapk/releases/download/kotoba-v0.1.2/Kotoba-Windows.zip' -OutFile 'baseline.zip'
+          if ((Get-FileHash 'baseline.zip' -Algorithm SHA256).Hash.ToLowerInvariant() -ne '2324dd78188db973b67d7f873a7abe1f95d54ae5be7cf2df66cc77fef0770eed') { throw 'Baseline checksum mismatch' }
+          Expand-Archive -LiteralPath 'baseline.zip' -DestinationPath 'baseline'
+          Remove-Item 'baseline.zip'
+          Copy-Item 'dist/Kotoba/Kotoba.exe' 'baseline/Kotoba-Windows/Kotoba.exe' -Force
+          Get-ChildItem 'dist/Kotoba/_internal' -Directory | Where-Object { $_.Name -like '*pyaudiowpatch*' } | ForEach-Object {
+            Copy-Item $_.FullName 'baseline/Kotoba-Windows/_internal' -Recurse -Force
           }
+          $exe = (Resolve-Path 'baseline/Kotoba-Windows/Kotoba.exe').Path
+          $report = Join-Path $PWD 'update-self-test.json'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--self-test', $report) -Wait -PassThru
+          Get-Content $report
+          if ($process.ExitCode -ne 0) { throw 'Updated engines failed' }
+          $report = Join-Path $PWD 'update-live-ui.json'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-live-ui', $report) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw 'Updated live UI failed' }
+          $audio = (Resolve-Path 'jfk.flac').Path
+          $output = Join-Path $PWD 'live-check'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-live', $audio, $output) -Wait -PassThru
+          if ($process.ExitCode -ne 0) { Get-Content "$output/live-report.json"; throw 'Updated live replay failed' }
+          $r = Get-Content "$output/live-report.json" -Raw | ConvertFrom-Json
+          if ((Get-Content "$($r.folder)/live.en.txt" -Raw) -notmatch 'country') { throw 'Updated live transcript mismatch' }
+          Remove-Item 'baseline' -Recurse -Force
       - name: Package verified release
         run: python package_windows_release.py
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload kotoba-v0.1.2 release-assets/Kotoba-Windows.zip release-assets/Kotoba.zip release-assets/Kotoba-hotfix-0.1.2.zip release-assets/SHA256SUMS.txt --repo reiqwazaaa/VADapk --clobber
+        run: gh release upload kotoba-v0.2.0 release-assets/Kotoba-Windows.zip release-assets/Kotoba.zip release-assets/Kotoba-update-0.2.0.zip release-assets/SHA256SUMS.txt --repo reiqwazaaa/VADapk --clobber
       - name: Save verification reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -111,3 +120,8 @@ jobs:
             desktop/kotoba/hotfix-ui-*.json
             desktop/kotoba/hotfix-long-name-output/report.json
             desktop/kotoba/build/Kotoba/warn-Kotoba.txt
+            desktop/kotoba/live-ui.json
+            desktop/kotoba/live-devices.json
+            desktop/kotoba/live-check/live-report.json
+            desktop/kotoba/update-self-test.json
+            desktop/kotoba/update-live-ui.json

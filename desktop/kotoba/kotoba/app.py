@@ -66,7 +66,8 @@ class App(tk.Tk):
                 canvas.yview_scroll(-int(event.delta / 120), 'units')
         self.bind('<MouseWheel>', wheel)
         ttk.Label(outer, text='ことば   Kotoba', style='Title.TLabel').pack(anchor='w')
-        ttk.Label(outer, text='Речь становится текстом. На твоём языке.', style='Sub.TLabel').pack(anchor='w', pady=(0, 16))
+        ttk.Label(outer, text='Речь становится текстом. На твоём языке.', style='Sub.TLabel').pack(anchor='w', pady=(0, 8))
+        ttk.Button(outer, text='Живой режим • микрофон / системный звук', command=self.open_live).pack(anchor='w', pady=(0, 8))
         self.source = tk.StringVar()
         self.output = tk.StringVar(value=self.settings.get('output', str(Path.home() / 'Documents' / 'Kotoba')))
         self.model = tk.StringVar(value=self.settings.get('model', 'large-v3-turbo'))
@@ -191,6 +192,9 @@ class App(tk.Tk):
         temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), 'utf-8')
         temp.replace(SETTINGS)
     def start(self):
+        live = getattr(self, 'live_window', None)
+        if live is not None and live.winfo_exists() and live.active():
+            messagebox.showinfo('Живой режим', 'Сначала останови живую сессию.'); return
         if self.worker and self.worker.is_alive(): return
         try:
             if not self.source.get().strip() or not Path(self.source.get()).is_file(): raise ValueError('Выбери существующий видео- или аудиофайл.')
@@ -270,7 +274,26 @@ class App(tk.Tk):
         if not path.is_dir(): messagebox.showinfo('Папка результата', 'Папка появится после запуска задачи.'); return
         if sys.platform == 'win32': os.startfile(path)
         else: subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', str(path)])
+    def open_live(self):
+        if self.worker and self.worker.is_alive():
+            messagebox.showinfo('Задача выполняется', 'Сначала заверши обработку файла.'); return
+        existing = getattr(self, 'live_window', None)
+        if existing is not None and existing.winfo_exists(): existing.lift(); return
+        try:
+            from .live_session import LiveConfig
+            from .live_ui import LiveWindow
+            if not self.output.get().strip(): raise ValueError('Выбери папку для сохранения сессии.')
+            config = LiveConfig(Path(self.output.get()), Path(self.models_dir.get()),
+                language=LANGUAGES[self.language.get()], target=LANGUAGES[self.target.get()],
+                model=self.model.get(), device=self.device.get(), translator=TRANSLATORS[self.translator.get()],
+                api_key=self.key.get().strip(), deepl_free=self.free.get(), offline_only=self.offline.get())
+            self.save_settings()
+            self.live_window = LiveWindow(self, config, STATE)
+        except Exception as error: messagebox.showerror('Живой режим', str(error))
     def on_close(self):
+        live = getattr(self, 'live_window', None)
+        if live is not None and live.winfo_exists() and live.active():
+            messagebox.showinfo('Живой режим', 'Сначала останови живую сессию и дождись сохранения.'); live.lift(); return
         if self.worker and self.worker.is_alive():
             messagebox.showinfo('Задача выполняется', 'Нажми «Отменить» и дождись завершения текущей операции, затем закрой окно.'); return
         self.destroy()

@@ -17,3 +17,5 @@
 При распространении собранного EXE сохрани лицензии зависимостей и проверь условия NVIDIA, FFmpeg и моделей. В ZIP этой версии нет весов и бинарных библиотек.
 
 - Microsoft Visual C++ 2015–2022 Redistributable: необходимые DLL x64 включены в переносимую сборку. [Условия и сведения](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
+
+- [PyAudioWPatch](https://github.com/s0d3s/PyAudioWPatch), Apache-2.0; WASAPI loopback capture. PortAudio has its own permissive license included with the wheel.

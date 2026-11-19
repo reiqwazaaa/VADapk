@@ -2,7 +2,7 @@
 from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_dynamic_libs, collect_submodules, copy_metadata, get_package_paths
 
 datas, binaries, hiddenimports = [], [], []
-for package in ('faster_whisper', 'ctranslate2', 'tokenizers', 'sentencepiece', 'av', 'onnxruntime'):
+for package in ('faster_whisper', 'ctranslate2', 'tokenizers', 'sentencepiece', 'av', 'onnxruntime', 'pyaudiowpatch'):
     package_data, package_binaries, package_imports = collect_all(package, include_py_files=False)
     datas += package_data
     binaries += package_binaries
