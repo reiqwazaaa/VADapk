@@ -180,22 +180,39 @@ def run_live(config,stop,log,notify,worker_factory=Worker):
                 trans={**common,'translator':config.translator,'deepl_free':config.deepl_free,
                        'inbox':str(inbox),'stop':str(trans_stop)}
                 workers['translate']=worker_factory(root,'translate',trans);workers['translate'].start('translate',config.api_key)
-            ready=set();done=set();started=False
+            ready=set();done=set();started=False;translation_failed=False
+            def disable_translation(message):
+                nonlocal translate, translation_failed
+                translate=False;translation_failed=True
+                ready.add('translate');done.add('translate');trans_stop.touch()
+                writer.metadata['translation_incomplete']=True
+                writer.metadata['translation_error']=message
+                writer.skipped.extend(sorted(translation_pending));translation_pending.clear()
+                writer.status('listening' if started else 'preparing')
+                log('Перевод отключён: '+message)
+                notify('translation_unavailable','Перевод недоступен. Расшифровка продолжится. '+message)
             with inbox.open('a',encoding='utf-8',buffering=1) as requests:
                 while True:
                     if stop.is_set() and stopping is None:
                         stopping=time.monotonic();asr_stop.touch()
                         log('Останавливаю захват и сохраняю последнюю фразу…');notify('status','Остановка…')
                     for kind,worker in workers.items():
+                        if kind=='translate' and translation_failed:continue
                         items=worker.read()
                         code=worker.process.poll()
                         if code is not None: items+=worker.read()
                         for item in items:
                             event=item['event']
-                            if event=='error':raise RuntimeError(item.get('traceback',item['message']))
+                            if event=='error':
+                                log(item.get('traceback',item['message']))
+                                if kind=='translate':
+                                    disable_translation(item['message']);break
+                                raise RuntimeError(item['message'])
                             if event=='ready':ready.add(kind)
                             elif event=='done':done.add(kind)
-                            elif event=='log':log(item['message'])
+                            elif event=='log':
+                                log(item['message'])
+                                if not started:notify('status',item['message'])
                             elif kind=='asr' and event=='listening':
                                 writer.status('listening');notify('status','Слушаю: системный звук' if config.source=='system' else 'Слушаю: микрофон' if config.source=='mic' else 'Тестовый аудиопоток')
                             elif event=='preview':writer.preview(item['text']);notify('preview',item)
@@ -219,6 +236,8 @@ def run_live(config,stop,log,notify,worker_factory=Worker):
                                 notify('warning','Пропуск звука: обработка отстаёт. Выбери small или «Быстро».')
                             elif event in ('level','timing'):notify(event,item)
                         if code is not None and kind not in done:
+                            if kind=='translate':
+                                disable_translation(f'Процесс перевода завершился (0x{code & 0xffffffff:08X}). Останови сессию и запусти заново для повтора.');continue
                             raise RuntimeError(f'Живой {kind} worker завершился без подтверждения (0x{code & 0xffffffff:08X}). Полученный текст сохранён.')
                     if ready==set(workers) and not started and stopping is None:
                         go.touch();started=True;notify('status','Запускаю захват…')

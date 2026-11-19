@@ -1,7 +1,7 @@
 name: Build Kotoba Windows release
 on:
   push:
-    branches: [kotoba-release-v0.2.0]
+    branches: [kotoba-release-v0.2.1]
 permissions:
   contents: write
 jobs:
@@ -101,18 +101,29 @@ jobs:
           $r = Get-Content "$output/live-report.json" -Raw | ConvertFrom-Json
           if ((Get-Content "$($r.folder)/live.en.txt" -Raw) -notmatch 'country') { throw 'Updated live transcript mismatch' }
           Remove-Item 'baseline' -Recurse -Force
+      - name: Verify real NLLB download and cached offline translation
+        run: |
+          $exe = (Resolve-Path 'dist/Kotoba/Kotoba.exe').Path
+          $report = Join-Path $PWD 'nllb-check.json'
+          $process = Start-Process -FilePath $exe -ArgumentList @('--smoke-nllb', $report) -Wait -PassThru
+          Get-Content $report
+          if ($process.ExitCode -ne 0) { throw 'Real NLLB download/translation failed' }
+          $r = Get-Content $report -Raw | ConvertFrom-Json
+          if (-not $r.ok -or -not $r.cached_test_network_blocked) { throw 'Cached offline verification failed' }
+          Remove-Item 'nllb-models' -Recurse -Force
       - name: Package verified release
         run: python package_windows_release.py
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload kotoba-v0.2.0 release-assets/Kotoba-Windows.zip release-assets/Kotoba.zip release-assets/Kotoba-update-0.2.0.zip release-assets/SHA256SUMS.txt --repo reiqwazaaa/VADapk --clobber
+        run: gh release upload kotoba-v0.2.1 release-assets/Kotoba-Windows.zip release-assets/Kotoba.zip release-assets/Kotoba-update-0.2.1.zip release-assets/SHA256SUMS.txt --repo reiqwazaaa/VADapk --clobber
       - name: Save verification reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Kotoba-Windows-verification
           path: |
+            desktop/kotoba/nllb-check.json
             desktop/kotoba/frozen-self-test.json
             desktop/kotoba/frozen-ui.json
             desktop/kotoba/asr-check/report.json

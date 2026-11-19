@@ -13,6 +13,28 @@ def main():
         from kotoba.asr_worker import main as asr_worker
         asr_worker(*sys.argv[2:5])
         return 1
+    if len(sys.argv)>2 and sys.argv[1]=='--smoke-nllb':
+        import re, traceback
+        from unittest.mock import patch
+        from kotoba.core import Job, OfflineTranslator
+        report=Path(sys.argv[2]); report.parent.mkdir(parents=True,exist_ok=True)
+        logs=[];translations=[]
+        try:
+            for source,text in [('en','Hello, world!'),('ja','こんにちは。今日はいい天気です。')]:
+                job=Job(Path('.'),Path('.'),language=source,target='ru',
+                        models_dir=report.parent/'nllb-models',offline_only=source=='ja')
+                if source=='ja':
+                    with patch('requests.sessions.Session.request',side_effect=AssertionError('Network forbidden in cached test')):
+                        translator=OfflineTranslator(job,logs.append)
+                else:translator=OfflineTranslator(job,logs.append)
+                try: translated=translator.translate(text)
+                finally:translator.close()
+                if not re.search('[А-Яа-яЁё]',translated):raise RuntimeError('No Russian translation: '+translated)
+                translations.append({'source':source,'text':text,'translation':translated})
+            result={'ok':True,'translations':translations,'log':logs,'cached_test_network_blocked':True}
+        except Exception:result={'ok':False,'traceback':traceback.format_exc(),'log':logs,'translations':translations}
+        report.write_text(json.dumps(result,ensure_ascii=False,indent=2),'utf-8')
+        return 0 if result['ok'] else 1
     if len(sys.argv) > 2 and sys.argv[1] == '--self-test':
         import importlib
         result = {}
@@ -64,7 +86,11 @@ def main():
         with patch('kotoba.live_ui.list_devices', return_value=[{'id':1,'kind':'system','name':'Test loopback'}]):
             win=LiveWindow(app,LiveConfig(Path(sys.argv[2]).parent,Path('models')),Path(sys.argv[2]).parent)
             app.update();win.show_overlay();app.update()
-            result={'ok':win.winfo_exists() and win.overlay.winfo_exists(),'title':win.title()}
+            win.events.put(('translation_unavailable','Перевод недоступен: сеть. Расшифровка продолжится.'))
+            win.events.put(('status','Слушаю: микрофон'));win.after_cancel(win.poll_id);win.poll();app.update()
+            warning_visible='сеть' in win.translation_status.get()
+            result={'ok':bool(win.winfo_exists() and win.overlay.winfo_exists() and warning_visible),
+                    'title':win.title(),'translation_warning_visible':warning_visible}
             win.destroy();app.destroy()
         Path(sys.argv[2]).write_text(json.dumps(result),'utf-8')
         return 0 if result['ok'] else 1

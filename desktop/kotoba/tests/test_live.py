@@ -147,6 +147,40 @@ class CaptureConversionTests(unittest.TestCase):
         self.assertTrue(opened[0]['input'])
 
 class LiveTranslationControllerTests(unittest.TestCase):
+    def test_translation_setup_failure_still_starts_capture_and_saves_original(self):
+        self.check_translation_failure(False)
+
+    def test_native_translation_crash_still_saves_original(self):
+        self.check_translation_failure(True)
+
+    def check_translation_failure(self, native):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);events=[];logs=[]
+            class Fake:
+                def __init__(self,folder,kind,cfg):
+                    self.kind=kind;self.cfg=cfg;self.sent=False;self.ready=False
+                    self.process=types.SimpleNamespace(poll=lambda:None,returncode=1)
+                def start(self,*args):pass
+                def read(self):
+                    if self.kind=='translate' and not self.sent:
+                        self.sent=True;self.process.poll=lambda:1
+                        return [] if native else [{'event':'error','message':'Не удалось скачать NLLB: сеть недоступна.','traceback':'Full technical traceback'}]
+                    if self.kind=='asr':
+                        if not self.ready:self.ready=True;return [{'event':'ready'}]
+                        if not self.sent and Path(self.cfg['go']).exists():
+                            self.sent=True;return [{'event':'commit','start':0,'end':2,'text':'Original saved'},{'event':'done'}]
+                    return []
+                def close(self,log):pass
+            folder=run_live(LiveConfig(root/'out',root/'models',translator='offline'),threading.Event(),logs.append,lambda e,d:events.append((e,d)),Fake)
+            self.assertIn('Original saved',(folder/'live.ja.txt').read_text('utf-8-sig'))
+            metadata=json.loads((folder/'session.json').read_text())
+            self.assertTrue(metadata['translation_incomplete'])
+            self.assertEqual(metadata['status'],'stopped')
+            warnings=[data for event,data in events if event=='translation_unavailable']
+            self.assertEqual(len(warnings),1)
+            self.assertNotIn('Full technical traceback', warnings[0])
+            if not native:self.assertIn('Full technical traceback',logs)
+
     def test_capture_waits_for_translation_and_commits_are_translated(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);configs=[]

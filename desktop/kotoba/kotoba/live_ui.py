@@ -58,6 +58,8 @@ class LiveWindow(tk.Toplevel):
         ttk.Label(body,text='Живая расшифровка',font=('Segoe UI',22,'bold')).pack(anchor='w')
         ttk.Label(body,text='Языки, Whisper и переводчик берутся из главного окна. Меняй их до открытия этой панели.',wraplength=790).pack(anchor='w',pady=6)
         ttk.Label(body,text=f'{config.language} → {config.target} • {config.model} • {config.translator} • {config.device}').pack(anchor='w')
+        self.translation_status=tk.StringVar(value='Перевод отключён.' if config.translator=='none' or config.language==config.target else 'Перевод появится после подтверждения фразы.')
+        ttk.Label(body,textvariable=self.translation_status,wraplength=790).pack(anchor='w')
         row=ttk.Frame(body);row.pack(fill='x',pady=8)
         self.kind_box=ttk.Combobox(row,textvariable=self.source,values=['Системный звук','Микрофон'],state='readonly',width=19)
         self.kind_box.pack(side='left');self.kind_box.bind('<<ComboboxSelected>>',lambda e:self.fill_devices())
@@ -120,6 +122,7 @@ class LiveWindow(tk.Toplevel):
             logger=TaskLog(self.log_path,lambda s:self.events.put(('log',s)),[config.api_key])
         except Exception as error:messagebox.showerror('Живой режим',str(error),parent=self);return
         self.stop_event.clear();self.last_committed='';self.summary={};self.status.set('Подготовка моделей. Захват ещё не начат.')
+        self.translation_status.set('Перевод отключён.' if config.translator=='none' or config.language==config.target else 'Подготовка переводчика…')
         self.overlay.preview('','');self.overlay.translation('');self.show_overlay()
         self.start_button.configure(state='disabled');self.stop_button.configure(state='normal')
         for widget in (self.kind_box,self.device_box,self.profile_box,self.threshold_scale,self.refresh):widget.configure(state='disabled')
@@ -147,12 +150,14 @@ class LiveWindow(tk.Toplevel):
                 elif event=='log':self.append(data)
                 elif event=='folder':self.result=Path(data)
                 elif event in ('status','warning'):self.status.set(data);self.overlay.status.configure(text=data)
+                elif event=='translation_unavailable':
+                    self.translation_status.set(data);self.append(data);self.overlay.translation('Перевод недоступен. См. журнал в панели живого режима.')
                 elif event=='preview':
                     if data['text']:self.overlay.preview(data['stable'],data['unstable'])
                 elif event=='commit':
                     self.last_committed=data['text'];self.overlay.preview(data['text'],'')
                     self.append(f"#{data['index']+1} [{data['start']:.1f}–{data['end']:.1f}] {data['text']}")
-                elif event=='translation':self.overlay.translation(data['text']);self.overlay.status.configure(text=f"Перевод фразы #{data['index']+1}");self.append(f"↳ #{data['index']+1}: {data['text']}")
+                elif event=='translation':self.translation_status.set('Перевод работает.');self.overlay.translation(data['text']);self.overlay.status.configure(text=f"Перевод фразы #{data['index']+1}");self.append(f"↳ #{data['index']+1}: {data['text']}")
                 elif event=='level':self.level['value']=data['rms']
                 elif event=='timing':
                     if data['inference']>4:self.status.set(f"Распознавание занимает {data['inference']:.1f} сек. Если отстаёт — выбери small или «Быстро».")

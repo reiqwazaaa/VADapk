@@ -195,8 +195,9 @@ class OfflineTranslator:
         from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
         self.torch = torch
         self.target = job.target
-        name = 'facebook/nllb-200-distilled-600M'
-        opts = {'cache_dir': str(job.models_dir / 'translation'), 'local_files_only': job.offline_only}
+        from .model_download import prepare_nllb
+        name = str(prepare_nllb(job, log))
+        opts = {'local_files_only': True}
         log('Загрузка NLLB-200 600M на CPU. Whisper уже освобождён из памяти.')
         self.tokenizer = AutoTokenizer.from_pretrained(name, src_lang=NLLB[job.language], **opts)
         self.model = AutoModelForSeq2SeqLM.from_pretrained(name, use_safetensors=False, **opts).eval()
